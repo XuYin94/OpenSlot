@@ -40,10 +40,10 @@ def get_curve_online(known, novel, stypes=['Bas']):
     return tp, fp, tnr_at_tpr95
 
 
-def metric_ood(x1, x2, stypes=['Bas'], verbose=True):
+def metric_ood(x1, x2, stypes=['Bas'], verbose=False):
     tp, fp, tnr_at_tpr95 = get_curve_online(x1, x2, stypes)
     results = dict()
-    mtypes = ['TNR', 'AUROC', 'DTACC', 'AUIN', 'AUOUT']
+    mtypes = ['FPR@95', 'AUROC', 'DTACC', 'AUIN', 'AUOUT']
     if verbose:
         print('      ', end='')
         for mtype in mtypes:
@@ -56,8 +56,8 @@ def metric_ood(x1, x2, stypes=['Bas'], verbose=True):
         results[stype] = dict()
 
         # TNR
-        mtype = 'TNR'
-        results[stype][mtype] = 100. * tnr_at_tpr95[stype]
+        mtype = 'FPR@95'
+        results[stype][mtype] = 100. * (1-tnr_at_tpr95[stype])
         if verbose:
             print(' {val:6.3f}'.format(val=results[stype][mtype]), end='')
 
@@ -99,15 +99,23 @@ def metric_ood(x1, x2, stypes=['Bas'], verbose=True):
     return results
 
 
-def compute_oscr(k_pred,pred_k, pred_u, labels):
-    #x1, x2 = np.max(pred_k, axis=1), np.max(pred_u, axis=1)
-    #pred = np.argmax(pred_k, axis=1)
-    correct = (k_pred == labels)
-    m_x1 = np.zeros(len(pred_k))
-    m_x1[k_pred == labels] = 1
-    k_target = np.concatenate((m_x1, np.zeros(len(pred_u))), axis=0)
-    u_target = np.concatenate((np.zeros(len(pred_k)), np.ones(len(pred_u))), axis=0)
-    predict = np.concatenate((pred_k, pred_u), axis=0)
+def compute_oscr(pred_k, pred_u, labels,openmax=False):
+    if openmax:
+        pred_k=np.array(pred_k)
+        pred_u=np.array(pred_u)
+        #print(pred_k.shape)
+        #print(pred_u.shape)
+        x1,x2=-1 * pred_k[:, -1],-1 * pred_u[:, -1]
+    else:
+        x1, x2 = np.max(pred_k, axis=1), np.max(pred_u, axis=1)
+
+    pred = np.argmax(pred_k, axis=1)
+    # correct = (pred == labels)
+    m_x1 = np.zeros(len(x1))
+    m_x1[pred == labels] = 1
+    k_target = np.concatenate((m_x1, np.zeros(len(x2))), axis=0)
+    u_target = np.concatenate((np.zeros(len(x1)), np.ones(len(x2))), axis=0)
+    predict = np.concatenate((x1, x2), axis=0)
     n = len(predict)
 
     # Cutoffs are of prediction values
@@ -125,9 +133,9 @@ def compute_oscr(k_pred,pred_k, pred_u, labels):
         FP = s_u_target[k:].sum()
 
         # True	Positive Rate
-        CCR[k] = float(CC) / float(len(pred_k))
+        CCR[k] = float(CC) / float(len(x1))
         # False Positive Rate
-        FPR[k] = float(FP) / float(len(pred_u))
+        FPR[k] = float(FP) / float(len(x2))
 
     CCR[n] = 0.0
     FPR[n] = 0.0
@@ -147,3 +155,4 @@ def compute_oscr(k_pred,pred_k, pred_u, labels):
         OSCR = OSCR + h * w
 
     return OSCR
+

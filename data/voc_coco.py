@@ -26,7 +26,7 @@ def test():
     #voc_dict={}
     #coco_dict={}
     voc_name_list=open("D:\\datasets\\VOC\\VOCdevkit\\VOC2012\\list\\train_aug.txt").readlines()+open("D:\\datasets\\VOC\\VOCdevkit\\VOC2012\\list\\val.txt").readlines()
-    #coco_name_list=open("D:\\datasets\\coco\\2014\\train14.txt").readlines()+open("D:\\datasets\\coco\\2014\\val14.txt").readlines()
+    #coco_name_list=open("D:\\datasets\\coco\\2014\\coco_multi_train.txt").readlines()+open("D:\\datasets\\coco\\2014\\coco_multi_val.txt").readlines()
     #voc_nbr=np.zeros(20)
     #coco_nbr=np.zeros(20)
     name_dict=[[],[],[],[],[],[],[]]

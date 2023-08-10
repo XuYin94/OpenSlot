@@ -7,6 +7,7 @@ from random import sample
 import json
 from torchvision import transforms
 from torchvision.utils import make_grid
+
 class NpEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, np.integer):
@@ -16,22 +17,14 @@ class NpEncoder(json.JSONEncoder):
         if isinstance(obj, np.ndarray):
             return obj.tolist()
         return json.JSONEncoder.default(self, obj)
-# voc_name_list=["aeroplane","bicycle","bird","boat","bottle","bus","car","cat", "chair",
-#                "cow", "diningtable", "dog", "horse", "motorbike", "person", "pottedplant", "sheep", "sofa", "train", "tvmonitor"]
-# coco_name_list=open(r"../data/osr_splits/coco_label_names.txt").readlines()
-#
-# voc_known_classes=[0,2,6,7,11,14]
-# voc_unknown_classes=[1,3,4,5,8,9,12,13,15,16,17,18,19]
-#
-# voc_cls_labels_dict = np.load('../data/cls_labels_voc.npy', allow_pickle=True).item()
-# coco_cls_labels_dict = np.load('../data/cls_labels_coco.npy', allow_pickle=True).item()
+
 
 def create_COCO_osr_class_split(name="coco",root_path="D:\\datasets\\coco\\2014\\"):
     print("Creating {0} OSR split".format(name))
     name_list = {}
     cls_label_dict=coco_cls_labels_dict
-    train_img_name_list = np.loadtxt(os.path.join(root_path, "train14.txt"), dtype=str)
-    val_img_name_list   = np.loadtxt(os.path.join(root_path, "val14.txt"), dtype=str)
+    train_img_name_list = np.loadtxt(os.path.join(root_path, "coco_multi_train.txt"), dtype=str)
+    val_img_name_list   = np.loadtxt(os.path.join(root_path, "coco_multi_val.txt"), dtype=str)
     train_img_name_list=["COCO_train2014_"+x for x in train_img_name_list]
     val_img_name_list=["COCO_val2014_"+x for x in val_img_name_list]
     nbr_cls = np.zeros(80)
@@ -85,14 +78,15 @@ def create_VOC_osr_class_split(name="voc",root_path="D:\\datasets\\VOC\\VOCdevki
     print("Creating {0} OSR split".format(name))
     name_list = {}
     cls_label_dict=voc_cls_labels_dict
-    img_name_list = [np.loadtxt(os.path.join(root_path, "train_aug.txt"), dtype=np.int32),
-                     np.loadtxt(os.path.join(root_path, "val.txt"), dtype=np.int32)]
+    img_name_list = [np.loadtxt(os.path.join(root_path, "voc_multi_train.txt"), dtype=np.int32),
+                     np.loadtxt(os.path.join(root_path, "voc_multi_val.txt"), dtype=np.int32)]
     nbr_cls=np.zeros(20)
     for i in range(20):
         name_list[str(i)]=[]
     nbr_known_cls=5
     nbr_img_per_cls=400
     img_name_list=np.concatenate(img_name_list,axis=0)
+
     assert img_name_list.size==len(cls_label_dict)
     for img in img_name_list:
         label=cls_label_dict[int(img)]
@@ -136,8 +130,8 @@ def VOC_osr_class_split(name="voc",root_path="D:\\datasets\\VOC\\VOCdevkit\\VOC2
     print("Creating {0} OSR split".format(name))
     name_list = {}
     cls_label_dict=voc_cls_labels_dict
-    img_name_list = [np.loadtxt(os.path.join(root_path, "train_aug.txt"), dtype=np.int32),
-                     np.loadtxt(os.path.join(root_path, "val.txt"), dtype=np.int32)]
+    img_name_list = [np.loadtxt(os.path.join(root_path, "voc_multi_train.txt"), dtype=np.int32),
+                     np.loadtxt(os.path.join(root_path, "voc_multi_val.txt"), dtype=np.int32)]
     nbr_cls=np.zeros(20)
     for i in range(20):
         name_list[str(i)]=[]
@@ -185,8 +179,8 @@ def COCO_osr_class_split(name="coco",root_path="D:\\datasets\\coco\\2014\\"):
     print("Creating {0} OSR split".format(name))
     name_list = {}
     cls_label_dict=coco_cls_labels_dict
-    train_img_name_list = np.loadtxt(os.path.join(root_path, "train14.txt"), dtype=str)
-    val_img_name_list   = np.loadtxt(os.path.join(root_path, "val14.txt"), dtype=str)
+    train_img_name_list = np.loadtxt(os.path.join(root_path, "coco_multi_train.txt"), dtype=str)
+    val_img_name_list   = np.loadtxt(os.path.join(root_path, "coco_multi_val.txt"), dtype=str)
     train_img_name_list=["COCO_train2014_"+x for x in train_img_name_list]
     val_img_name_list=["COCO_val2014_"+x for x in val_img_name_list]
     nbr_cls = np.zeros(80)
@@ -200,6 +194,7 @@ def COCO_osr_class_split(name="coco",root_path="D:\\datasets\\coco\\2014\\"):
         pre_fix=img.split('_')[1]
         key=int(img.split('_')[-1])
         label=cls_label_dict[key]
+        #print(label.sum())
         if label.sum()==1:
             nbr_cls[label==1]+=1
             name_list[str((label==1).nonzero()[0][0])].append(pre_fix+"/"+img+".jpg")
@@ -251,7 +246,7 @@ class OSR_dataset(Dataset):
             self.num_known_classes=20
 
     def __get_name_list(self):
-        text_file=os.path.join("./data/osr_splits/"+self.exp+"/"+self.exp+"_"+self.prefix+".txt")
+        text_file=os.path.join("./data/osr_splits/"+self.exp+"/single/"+self.exp+"_"+self.prefix+"_split.txt")
         line_list=open(text_file).readlines()
         print("Totally have {} samples in {} set.".format(len(line_list),self.prefix))
         img_path=[]
@@ -278,17 +273,21 @@ class OSR_dataset(Dataset):
         #print(np.asarray(image).shape)
         image=self.transform(image)
         label=int(self.labels[index])
+
         label=torch.as_tensor(label,dtype=torch.long)
         sample['img']=image
         sample['label']=label
 
         if self.prefix in ["train","val"]:
             class_label=torch.zeros((self.max_num_object))
+            selected_slots=torch.zeros((self.max_num_object))
             class_label[0]=label
+            selected_slots[0]=1
             class_label=torch.as_tensor(class_label,dtype=torch.int64)
 
             class_label=torch.nn.functional.one_hot(class_label,num_classes=self.num_known_classes)
             sample['class_label']=class_label
+            sample['fg_channel']=selected_slots.unsqueeze(1)
 
         return sample
 
@@ -297,32 +296,105 @@ def Get_OSR_Datasets(train_transform, test_transform,dataroot="D:\\datasets\\VOC
 
     train_dataset = OSR_dataset(prefix='train',data_root=dataroot,exp=exp,transform=train_transform)
     val_dataset = OSR_dataset(prefix='val',data_root=dataroot,exp=exp,transform=test_transform)
-    test_dataset = OSR_dataset(prefix='test',data_root=dataroot,exp=exp,transform=test_transform)
-    #mix_known_unknown_dataset = OSR_dataset(split='test_mixture',data_root=dataroot,exp=exp,transform=test_transform)
-
-    print('Train: ', len(train_dataset), 'Val: ', len(val_dataset), 'Single_Out: ', len(test_dataset))
+    single_test_dataset = OSR_dataset(prefix='single_test',data_root=dataroot,exp=exp,transform=test_transform)
+    easy_mixture_test_dataset = OSR_dataset(prefix='easy_mixture_test',data_root=dataroot,exp=exp,transform=test_transform)
+    hard_mixture_test_dataset = OSR_dataset(prefix='hard_mixture_test',data_root=dataroot,exp=exp,transform=test_transform)
+    print('Train: ', len(train_dataset), 'Val: ', len(val_dataset), 'Single_test: ', len(single_test_dataset),
+          'Easy_mixture_test:', len(easy_mixture_test_dataset),
+    'Hard_mixture_test:', len(hard_mixture_test_dataset))
 
     all_datasets = {
         'train': train_dataset,
         'val': val_dataset,
-        'test': test_dataset
+        'single_test': single_test_dataset,
+        'easy_mixture_test': easy_mixture_test_dataset,
+        'hard_mixture_test': hard_mixture_test_dataset
     }
 
     return all_datasets
 
+
+class Multi_label_OSR_dataset(Dataset):
+    def __init__(self, data_root="D:\\datasets\\VOC\\VOCdevkit\\",prefix='train',exp="voc", transform=None):
+        self.root_dir=data_root
+        self.transform=transform
+        self.prefix=prefix
+        self.exp=exp
+        self.exp_info='./data/osr_splits/'+exp+'/multi/'+exp+'_multi_'+prefix+''
+
+        self.img_list=open(r'' + self.exp_info + '.txt').readlines()
+        if prefix in ["train","train_aug","val"]:
+            self.cls_labels_dict = np.load(self.exp_info+"_label.npy")
+
+        self.transform=transform
+
+        if exp=="voc":
+            self.max_num_object = 6
+            self.num_known_classes=20
+            self.path_preset="JPEGImages"
+        elif exp=="coco":
+            self.max_num_object = 7
+            self.num_known_classes=80
+            self.path_preset=self.exp
+
+    def __len__(self):
+        return len(self.img_list)
+
+    def __getitem__(self, index):
+        name=self.img_list[index].strip()
+        sample={}
+        img_path=os.path.join(self.root_dir,name)
+        image=Image.open(img_path).convert("RGB")
+        image=self.transform(image)
+        sample['img']=image
+        if self.prefix in ["train","train_aug","val"]:
+            sample['label'] = self.cls_labels_dict[index]
+            label=self.cls_labels_dict[index].nonzero()[0][:self.max_num_object]
+            nbr_clss=self.max_num_object if len(label)>self.max_num_object else len(label)
+            selected_slots = torch.zeros((self.max_num_object))
+            semantic_label = torch.zeros((self.max_num_object))
+            selected_slots[:nbr_clss] = 1
+            semantic_label[:nbr_clss] = torch.as_tensor(np.array(label),dtype=torch.long)+1
+
+            sample['fg_channel']=selected_slots.unsqueeze(1)
+            semantic_label=torch.as_tensor(semantic_label,dtype=torch.int64)
+            semantic_label=torch.nn.functional.one_hot(semantic_label,num_classes=self.num_known_classes+1)[:,1:]
+            sample['class_label']=semantic_label
+        else:
+            sample['label']=torch.tensor(float(np.inf))
+        return sample
+
+
+
+
 if __name__=="__main__":
+    voc_name_list = ["aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat", "chair",
+                     "cow", "diningtable", "dog", "horse", "motorbike", "person", "pottedplant", "sheep", "sofa",
+                     "train", "tvmonitor"]
+    coco_name_list = open(r"../data/osr_splits/coco_label_names.txt").readlines()
+
+    voc_known_classes = [0, 2, 6, 7, 11, 14]
+    voc_unknown_classes = [1, 3, 4, 5, 8, 9, 12, 13, 15, 16, 17, 18, 19]
+
+    voc_cls_labels_dict = np.load('../data/cls_labels_voc.npy', allow_pickle=True).item()
+    coco_cls_labels_dict = np.load('../data/cls_labels_coco.npy', allow_pickle=True).item()
     #create_COCO_osr_class_split(name="COCO",root_path="D:\\datasets\\coco\\2014\\")
     #create_VOC_osr_class_split(name="voc",root_path="D:\\datasets\\VOC\\VOCdevkit\\VOC2012\\")
     #VOC_osr_class_split(name="voc",root_path="D:\\datasets\\VOC\\VOCdevkit\\VOC2012\\")
-    COCO_osr_class_split(name="COCO",root_path="D:\\datasets\\coco\\2014\\")
-    # from utils import transform
-    # from torchvision import transforms
-    # trans=transforms.Compose([
-    #                          transforms.Resize((224,224)),
-    #                          transforms.ToTensor(),
-    #                          transforms.Normalize(std=[0.229, 0.224, 0.225],
-    #                                            mean=[0.485, 0.456, 0.406])
-    #                          ])
+    #COCO_osr_class_split(name="COCO",root_path="D:\\datasets\\coco\\2014\\")
+    trans=transforms.Compose([
+                             transforms.Resize((224,224)),
+                             transforms.ToTensor(),
+                             transforms.Normalize(std=[0.229, 0.224, 0.225],
+                                               mean=[0.485, 0.456, 0.406])
+                             ])
+    test_dataset=Multi_label_OSR_dataset(data_root="D:\\datasets\\VOC\\VOCdevkit\\test\\VOCdevkit\\VOC2012\\",prefix='test',exp="voc", transform=trans)
+    dataset=Multi_label_OSR_dataset(data_root="D:\\datasets\\VOC\\VOCdevkit\\VOC2012\\",prefix='train',exp="voc", transform=trans)
+    dataloader=DataLoader(dataset, batch_size=8,shuffle=True, sampler=None, num_workers=0)
+
+    from utils import transform
+    #from torchvision import transforms
+
     # #datasets=Get_OSR_Datasets(train_transform=trans,test_transform=trans,dataroot="D:\\datasets\\VOC\\VOCdevkit\\VOC2012\\",exp="voc")
     # datasets=Get_OSR_Datasets(train_transform=trans,test_transform=trans,dataroot="D:\\datasets\\coco\\2014\\",exp="coco")
     # dataloaders = {}
@@ -335,18 +407,18 @@ if __name__=="__main__":
     # testloader = dataloaders['val']
     # outloader = dataloaders['test']
     #
-    # for loader in [outloader]:
-    #     val_list = []
-    #     for ii, sample in enumerate(loader):
-    #         if len(val_list)<=15:
-    #             img,label=sample['img'][0].cuda(),sample['label'][0].cuda()
-    #             img = transform.DeNormalize(std=[0.229, 0.224, 0.225],
-    #                                         mean=[0.485, 0.456, 0.406])(img)
-    #             print(coco_name_list[label])
-    #             val_list.append(img)
-    #         else:
-    #             break
-    # val_list = torch.stack(val_list, 0)
-    # val_list = make_grid(val_list, nrow=1, padding=5)
-    # val_list = transforms.ToPILImage()(val_list)
-    # val_list.show()
+    for loader in [dataloader]:
+        val_list = []
+        for ii, sample in enumerate(loader):
+            if len(val_list)<=15:
+                img=sample['img'][0].cuda()
+                label=sample['label'][0].cuda()
+                img=transform.DeNormalize(std=[0.229, 0.224, 0.225],
+                                               mean=[0.485, 0.456, 0.406])(img)
+                val_list.append(img)
+            else:
+                break
+    val_list = torch.stack(val_list, 0)
+    val_list = make_grid(val_list, nrow=1, padding=5)
+    val_list = transforms.ToPILImage()(val_list)
+    val_list.show()

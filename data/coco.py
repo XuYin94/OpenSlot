@@ -25,7 +25,7 @@ IGNORE = 255
 #
 # CAT_NAME_TO_NUM = dict(zip(CAT_LIST,range(len(CAT_LIST))))
 
-cls_labels_dict = np.load('./data/cls_labels_coco.npy', allow_pickle=True).item()
+cls_labels_dict = np.load('./cls_labels_coco.npy', allow_pickle=True).item()
 
 def decode_int_filename(int_filename):
     s = str(int_filename).split('\n')[0]
@@ -55,7 +55,7 @@ class COCO14SegmentationDataset(Dataset):
 
     def __init__(self, img_name_list_path, label_dir,coco14_root,transform):
 
-        self.img_name_list = load_img_name_list(img_name_list_path)[:3000]
+        self.img_name_list = load_img_name_list(img_name_list_path)
         self.coco14_root = coco14_root
         self.palette=colorization.COCO_palette
         self.label_dir = label_dir

@@ -4,14 +4,15 @@ from data.svhn import get_svhn_datasets
 from data.mnist import get_mnist_datasets
 from data.osr_splits.osr_splits import osr_splits
 from data.augmentations import get_transform
-from data.osr_natural import  Get_OSR_Datasets
-from config import osr_imagenet_split_dir
+from data.osr_natural import  Get_OSR_Datasets,Multi_label_OSR_dataset
+import torchvision
 from torch.utils.data import DataLoader
 import argparse
 import os
 import sys
 import pickle
 import torch
+import numpy as np
 
 """
 For each dataset, define function which returns:
@@ -28,6 +29,58 @@ get_dataset_funcs = {
     'svhn': get_svhn_datasets,
     'tinyimagenet': get_tiny_image_net_datasets
 }
+
+class ImageNet22k(torchvision.datasets.ImageFolder):
+
+    def __init__(self, root, transform):
+
+        super(ImageNet22k, self).__init__(root, transform)
+
+    def __getitem__(self, item):
+
+        img, __ = super().__getitem__(item)
+
+
+        return {'img':img}
+
+def get_multi_ood_datasets(name,ood="imagenet22k"):
+    root_paths = {
+        "coco": "D:\\datasets\\coco\\2014\\",
+        "voc": "D:\\datasets\\VOC\\VOCdevkit\\VOC2012\\",
+        "voc_test": "D:\\datasets\\VOC\\VOCdevkit\\test\\VOCdevkit\\VOC2012\\",
+        "imagenet22k": "D:\datasets\ImageNet-22K"
+    }
+    normalize = torchvision.transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                     std=[0.229, 0.224, 0.225])
+    # img_transform = torchvision.transforms.Compose([
+    #         torchvision.transforms.RandomHorizontalFlip(),
+    #         torchvision.transforms.RandomResizedCrop((224, 224), scale=(0.5, 2.0)),
+    #         torchvision.transforms.ToTensor(),
+    #         normalize,
+    #     ])
+
+    img_transform,test_transform=get_transform(exp_name="voc")
+    test_transform = torchvision.transforms.Compose([
+        torchvision.transforms.Resize((224, 224)),
+        torchvision.transforms.ToTensor(),
+        normalize
+    ])
+    if name=="voc":
+        train_set=Multi_label_OSR_dataset(data_root=root_paths[name],prefix='train',exp=name, transform=img_transform)
+        #val_set=Multi_label_OSR_dataset(data_root=root_paths,prefix='val',exp=name, transform=img_transform)
+        val_set=Multi_label_OSR_dataset(data_root=root_paths['voc_test'],prefix='test',exp=name, transform=img_transform)
+        test_set = ImageNet22k(root_paths[ood], transform=test_transform)
+    else:
+        train_set=Multi_label_OSR_dataset(data_root=root_paths[name],prefix='train',exp=name, transform=img_transform)
+        val_set=Multi_label_OSR_dataset(data_root=root_paths[name],prefix='test',exp=name, transform=img_transform)
+        test_set = ImageNet22k(root_paths[ood], transform=test_transform)
+
+    dataset={"train":train_set,
+             "val": val_set,
+             "test": test_set}
+    return dataset
+
+
 
 def get_datasets(name, transform='default', image_size=224, train_classes=(0, 1, 8, 9),
                  open_set_classes=range(10), balance_open_set_eval=False, split_train_val=True, seed=0, args=None):
@@ -51,8 +104,6 @@ def get_datasets(name, transform='default', image_size=224, train_classes=(0, 1,
                                   balance_open_set_eval=balance_open_set_eval,
                                   split_train_val=split_train_val,
                                   seed=seed)
-        datasets["mean"]= [0.5, 0.5, 0.5]
-        datasets["std"] = [0.5, 0.5, 0.5]
     elif name in ["coco", "voc", "nus"]:
         root_paths = {
             "coco": "D:\\datasets\\coco\\2014\\",
@@ -62,8 +113,8 @@ def get_datasets(name, transform='default', image_size=224, train_classes=(0, 1,
         root_dir = root_paths[name]
         datasets = Get_OSR_Datasets(train_transform, test_transform, dataroot=root_dir, exp=name)
 
-        datasets["mean"]= [0.485, 0.456, 0.406]
-        datasets["std"] = [0.229, 0.224, 0.225]
+        #datasets["mean"]= [0.485, 0.456, 0.406]
+        #datasets["std"] = [0.229, 0.224, 0.225]
     else:
         raise NotImplementedError
 

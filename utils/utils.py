@@ -1,7 +1,50 @@
 import math
 import torch
 import warnings
+import ocl
+import torch
+import torch.nn as nn
+import numpy as np
+from scipy.optimize import linear_sum_assignment
+import torch.nn.functional as F
+from ocl.utils.trees import walk_tree_with_paths
+from ocl.visualization_types import Visualization
 
+def log_visualizations(visualzer,logger_experiment,outputs,images,global_step, phase="train"):
+
+    visualizations = {}
+    for name, vis in visualzer.items():
+        if isinstance(vis,ocl.visualizations.Image):
+            visualizations[name] = vis(images)
+        elif isinstance(vis,ocl.visualizations.Mask):
+            visualizations[name] = vis(mask=outputs.masks_as_image)
+        elif isinstance(vis,ocl.visualizations.Segmentation):
+            visualizations[name] = vis(image=images,mask=outputs.masks_as_image)
+        else:
+            NotImplementedError
+
+
+    visualization_iterator = walk_tree_with_paths(
+        visualizations, path=None, instance_check=lambda t: isinstance(t, Visualization)
+    )
+    for path, vis in visualization_iterator:
+        try:
+            str_path = ".".join(path)
+            vis.add_to_experiment(
+                experiment=logger_experiment,
+                tag=f"{phase}/{str_path}",
+                global_step=global_step,
+            )
+        except AttributeError:
+            # The logger does not support the right data format.
+            pass
+
+def get_available_devices():
+    sys_gpu = torch.cuda.device_count()
+
+    device = torch.device('cuda:0' if sys_gpu > 0 else 'cpu')
+    available_gpus = list(range(sys_gpu))
+    return device, available_gpus
 
 def _no_grad_trunc_normal_(tensor, mean, std, a, b):
     # Cut & paste from PyTorch official master until it's in a few official releases - RW
@@ -42,112 +85,6 @@ def trunc_normal_(tensor, mean=0., std=1., a=-2., b=2.):
     # type: (Tensor, float, float, float, float) -> Tensor
     return _no_grad_trunc_normal_(tensor, mean, std, a, b)
 
-
-import torch
-import torch.nn as nn
-import numpy as np
-from scipy.optimize import linear_sum_assignment
-import os
-import os.path
-import torch.nn.functional as F
-
-
-class TransformTwice:
-    def __init__(self, transform):
-        self.transform = transform
-
-    def __call__(self, inp):
-        out1 = self.transform(inp)
-        out2 = self.transform(inp)
-        return out1, out2
-
-
-class AverageMeter(object):
-
-    def __init__(self, name, fmt=':f'):
-        self.name = name
-        self.fmt = fmt
-        self.reset()
-
-    def reset(self):
-        self.val = 0
-        self.avg = 0
-        self.sum = 0
-        self.count = 0
-
-    def update(self, val, n=1):
-        self.val = val
-        self.sum += val * n
-        self.count += n
-        self.avg = self.sum / self.count
-
-    def __str__(self):
-        fmtstr = '{name} {val' + self.fmt + '} ({avg' + self.fmt + '})'
-        return fmtstr.format(**self.__dict__)
-
-
-def accuracy(output, target):
-    num_correct = np.sum(output == target)
-    res = num_correct / len(target)
-
-    return res
-
-
-def cluster_acc(y_pred, y_true):
-    """
-    Calculate clustering accuracy. Require scikit-learn installed
-    # Arguments
-        y: true labels, numpy.array with shape `(n_samples,)`
-        y_pred: predicted labels, numpy.array with shape `(n_samples,)`
-    # Return
-        accuracy, in [0,1]
-    """
-    y_true = y_true.astype(np.int64)
-    assert y_pred.size == y_true.size
-    D = max(y_pred.max(), y_true.max()) + 1
-    w = np.zeros((D, D), dtype=np.int64)
-    for i in range(y_pred.size):
-        w[y_pred[i], y_true[i]] += 1
-    row_ind, col_ind = linear_sum_assignment(w.max() - w)
-
-    return w[row_ind, col_ind].sum() / y_pred.size
-
-
-def entropy(x):
-    """
-    Helper function to compute the entropy over the batch
-    input: batch w/ shape [b, num_classes]
-    output: entropy value [is ideally -log(num_classes)]
-    """
-    EPS = 1e-8
-    x_ = torch.clamp(x, min=EPS)
-    b = x_ * torch.log(x_)
-
-    if len(b.size()) == 2:  # Sample-wise entropy
-        return - b.sum(dim=1).mean()
-    elif len(b.size()) == 1:  # Distribution-wise entropy
-        return - b.sum()
-    else:
-        raise ValueError('Input tensor is %d-Dimensional' % (len(b.size())))
-
-
-class MarginLoss(nn.Module):
-
-    def __init__(self, m=0.2, weight=None, s=10):
-        super(MarginLoss, self).__init__()
-        self.m = m
-        self.s = s
-        self.weight = weight
-
-    def forward(self, x, target):
-        index = torch.zeros_like(x, dtype=torch.uint8)
-        index.scatter_(1, target.data.view(-1, 1), 1)
-        x_m = x - self.m * self.s
-
-        output = torch.where(index, x_m, x)
-        return F.cross_entropy(output, target, weight=self.weight)
-
-
 def initialize_weights(*models):
     for model in models:
         for m in model.modules():
@@ -177,3 +114,66 @@ def apply_leaf(m, f):
 
 def set_trainable(l, b):
     apply_leaf(l, lambda m: set_trainable_attr(m, b))
+
+def get_correct_slot(slots,using_softmax=False):
+    b,num_slots,num_classes=slots.shape
+    if using_softmax:
+        slots=torch.softmax(slots,dim=-1)  ## [b,num_slots,num_classes]
+    __, pred = torch.max(slots.flatten(1, 2), dim=-1)
+    indices=pred// num_classes
+    correct_slots_list=[]
+    for idx in range(slots.shape[0]):
+        correct_slots_list.append(slots[idx,indices[idx]])
+    return torch.stack(correct_slots_list,dim=0) ## [b,num_classes]
+
+def multi_correct_slot(slots):
+    pred,__=torch.max(slots,dim=1)
+    pred=torch.sigmoid(pred).detach()
+    return pred
+
+def slot_score(slots,threshold=0.95,exp_type="single"):
+    slot_logits=slots.detach().cpu()
+    softmax_slot=torch.softmax(slot_logits,dim=-1)
+    slot_maximum,indices=torch.max(softmax_slot,dim=-1)
+    slot_logits=slot_logits*((slot_maximum>threshold).unsqueeze(-1)) ## filter out task-irrelevant slots
+    __, pred = torch.max(slot_logits.flatten(1, 2), dim=-1)
+    indices=pred// slots.shape[-1]
+    correct_slots_list=[]
+    for idx in range(slots.shape[0]):
+        correct_slots_list.append(slots[idx,indices[idx]])
+    return torch.stack(correct_slots_list,dim=0) ## [b,num_classes]
+
+def slot_max(slots,exp_type,phase="val"):
+    if exp_type=="single":
+        return get_correct_slot(slots)
+    else:
+        #batch_size, num_slots, num_classes = slots.shape
+        #output = torch.zeros((batch_size, num_classes))
+        slot_logits = slots.detach().cpu()
+        softmax_slot = torch.softmax(slot_logits, dim=-1)
+        slot_maximum, indices = torch.max(softmax_slot, dim=-1)
+        # if phase=="ood":
+        #     print((slot_maximum>0.95).sum())
+        slot_logits = slot_logits * ((slot_maximum >0.95).unsqueeze(-1))
+        # print(slot_logits.shape)
+        #slot_maximum, indices = torch.max(slot_logits, dim=-1)
+        output,__=torch.max(slot_logits.flatten(1,2),dim=-1)
+
+    return output
+
+def multi_correct_slot_2(slots,use_softmax=True,threshold=0.90):
+    batch_size,num_slots,num_classes=slots.shape
+    output=torch.zeros((batch_size,num_classes))
+    slot_logits=slots.detach().cpu()
+    if use_softmax:
+        softmax_slot=torch.softmax(slot_logits,dim=-1)
+    slot_maximum,indices=torch.max(softmax_slot,dim=-1)
+    # print(indices.max())
+    slot_logits=slot_logits*((slot_maximum>threshold).unsqueeze(-1))
+    #print(slot_logits.shape)
+    slot_maximum,indices=torch.max(slot_logits,dim=-1)
+    #print(indices.max())
+    for i in range(batch_size):
+        output[i,indices[i]]=slot_maximum[i]
+
+    return output

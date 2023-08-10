@@ -58,6 +58,8 @@ class VOC_Dataset(Dataset):
 
         semantic_label=torch.unique(sample['label'])
         semantic_label=semantic_label[(semantic_label!=255)&(semantic_label!=0)]
+        #print(len(self.data_list))
+        print(semantic_label.shape)
         class_label=torch.zeros((self.max_num_object))
         num_class=semantic_label.shape[0]
         assert semantic_label.shape[0]<=self.max_num_object
@@ -85,7 +87,7 @@ if __name__ == '__main__':
 
     split='train_aug'
     data_root="D:\\datasets\\VOC\\VOCdevkit\\VOC2012"
-    data_list="D:\\datasets\\VOC\\VOCdevkit\\VOC2012\\ImageSets\\Segmentation\\train_aug.txt"
+    data_list="D:\\datasets\\VOC\\VOCdevkit\\VOC2012\\ImageSets\\Segmentation\\voc_multi_train.txt"
 
     Voc_set=VOC_Dataset(split=split,data_root=data_root,transform=trans)
     col_map=Voc_set.palette
@@ -104,11 +106,11 @@ if __name__ == '__main__':
                 img=transform.DeNormalize(std=[0.229, 0.224, 0.225],
                                                mean=[0.485, 0.456, 0.406])(img)
                 gt=transforms.ToTensor()(gt.convert('RGB'))
-                salience=transforms.ToTensor()(transforms.ToPILImage()(salience).convert('RGB'))
-                val_list.extend([img,gt,salience])
-            else:
-                break
-    val_list=torch.stack(val_list,0)
-    val_list=make_grid(val_list,nrow=3,padding=5)
-    val_list=transforms.ToPILImage()(val_list)
-    val_list.show()
+    #             salience=transforms.ToTensor()(transforms.ToPILImage()(salience).convert('RGB'))
+    #             val_list.extend([img,gt,salience])
+    #         else:
+    #             break
+    # val_list=torch.stack(val_list,0)
+    # val_list=make_grid(val_list,nrow=3,padding=5)
+    # val_list=transforms.ToPILImage()(val_list)
+    # val_list.show()

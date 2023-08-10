@@ -21,49 +21,21 @@ from torch.utils.data import Dataset,DataLoader
 from data import Voc
 from utils.evaluator import OSREvaluator
 from utils import transform
+from utils.utils import get_available_devices,log_visualizations,get_correct_slot
 import warnings
-from ocl.optimization import OptimizationWrapper
+from torch.optim.lr_scheduler import StepLR
 from datetime import datetime
-from ocl.utils.trees import walk_tree_with_paths
-from ocl.visualization_types import Visualization
 
-def log_visualizations(visualzer,logger_experiment,outputs,images,global_step, phase="train"):
-
-    visualizations = {}
-    for name, vis in visualzer.items():
-        if isinstance(vis,ocl.visualizations.Image):
-            visualizations[name] = vis(images)
-        elif isinstance(vis,ocl.visualizations.Mask):
-            visualizations[name] = vis(mask=outputs.masks_as_image)
-        elif isinstance(vis,ocl.visualizations.Segmentation):
-            visualizations[name] = vis(image=images,mask=outputs.masks_as_image)
-        else:
-            NotImplementedError
+def load_checkpoint(path,model,optimizer):
+    weight=torch.load(path)['model_state_dict']
+    model.load_state_dict(weight)
+    optimizer=torch.load(path)['optimizer_state_dict']
+    epoch=torch.load(path)['epoch']
+    return epoch,model,optimizer
 
 
-    visualization_iterator = walk_tree_with_paths(
-        visualizations, path=None, instance_check=lambda t: isinstance(t, Visualization)
-    )
-    for path, vis in visualization_iterator:
-        try:
-            str_path = ".".join(path)
-            vis.add_to_experiment(
-                experiment=logger_experiment,
-                tag=f"{phase}/{str_path}",
-                global_step=global_step,
-            )
-        except AttributeError:
-            # The logger does not support the right data format.
-            pass
 
-def get_available_devices():
-    sys_gpu = torch.cuda.device_count()
-
-    device = torch.device('cuda:0' if sys_gpu > 0 else 'cpu')
-    available_gpus = list(range(sys_gpu))
-    return device, available_gpus
-
-def OSR_fit(config,model,optimizer,train_loader,val_loader,test_loader,nbr_cls,visualizer,device):
+def OSR_fit(config,model,train_loader,val_loader,test_loader_list,nbr_cls,visualizer,device):
 
     exp_path=os.path.join(config.log_root_path,config.exp_name)
     if not os.path.exists(exp_path):
@@ -71,83 +43,102 @@ def OSR_fit(config,model,optimizer,train_loader,val_loader,test_loader,nbr_cls,v
     log_path=os.path.join(exp_path,datetime.now().strftime("%Y_%m_%d-%I_%M_%S_%p"))
     os.mkdir(log_path)
     writer = SummaryWriter(log_path)
-
-    #evaluator=OSREvaluator(num_known_classes=nbr_cls)
+    params = model.get_trainable_params_groups(different_lr=False)
+    if len(params) > 1:
+        params[0]['lr'] = 0.01
+    optimizer = optim.Adam(params, lr=0.0004)
+    lr_scheduler=StepLR(optimizer,step_size=2000,gamma=0.5)
+    evaluator=OSREvaluator(train_loader=train_loader,num_known_classes=nbr_cls,exp_type="single",use_softmax=config.softmax_eval)
     train_epoch_size = len(train_loader)
-    current_iter = 0
+    #current_iter = 0
     epoch=0
+
+    #epoch,optimizer,model=load_checkpoint("./voc_single_epoch50_osr.pth",model,optimizer)
+    # path="./checkpoints/single_coco_osr.pth"
+    # weight=torch.load(path)
+    # model.load_state_dict(weight)
+    #optimizer.load_state_dict(torch.load(path)['optimizer_state_dict'])
+    # epoch=torch.load(path)['epoch']
+
+    current_iter=len(train_loader)*epoch
+    #overall_test(evaluator, model, val_loader, test_loader_list, epoch, writer)
     while current_iter<config.max_steps:
         model.train()
         total_loss = 0
         correct, total=0,0
-        #evaluator.eval(model,val_loader,test_loader,epoch,writer)
         for batch_idx, sample in enumerate(train_loader, 0):
             current_iter += 1
-            if not current_iter%2000:
-                learning_rate=optimizer.param_groups[1]['lr']/2
-
-                optimizer.param_groups[0]['lr'] = learning_rate/10
-                optimizer.param_groups[1]['lr'] = learning_rate
-            image = sample['img'].to(device)
-            label = sample['label'].to(device)
-            class_label=sample['class_label'].to(device)
+            for key, values in sample.items():
+                sample[key]=values.cuda()
 
             optimizer.zero_grad()
-            slots, pred, matching_loss = model(image, class_label)##mlp_pred: [b,num_slot,num_class]
-            if config.softmax_eval:
-                pred=torch.softmax(pred,dim=-1)
-            pred=torch.argmax(pred.flatten(1,2),dim=-1)
-            pred%=nbr_cls
-            total += label.size(0)
-            correct += (pred == label.data).sum()
+            slots, logits,__, matching_loss = model(sample)##mlp_pred: [b,num_slot,num_class]
 
-            total_loss += matching_loss.item()
             matching_loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
+            lr_scheduler.step()
+            logits=get_correct_slot(logits,config.softmax_eval)
+            prediction=logits.data.max(1)[1].to(device).cpu().numpy()
+            label=sample['label'].to(device).cpu().numpy()
+            total += label.shape[0]
+            correct += (prediction == label).sum()
 
+            total_loss += matching_loss.item()
             if batch_idx < train_epoch_size - 1 and current_iter<config.max_steps:
-                del slots, pred,
+                del slots, prediction,
             if current_iter>=config.max_steps:
                 break
+        image=sample["img"].cuda()
         decoder_output = model.get_slot_attention_mask(image)
         log_visualizations(visualizer,writer,decoder_output,image,current_iter)
         epoch+=1
         total_loss /= train_epoch_size
         acc = float(correct) * 100. / float(total)
-        print("Train | Step: {}, Loss: {:5f}, Acc: {:5f}, LR_1: {:6f},LR_2: {:6f}".format(current_iter, total_loss,acc,optimizer.param_groups[0]["lr"],optimizer.param_groups[1]["lr"]))
+        print("Train | Epoch: {}, Loss: {:5f}, Acc: {:5f}, LR: {}".format(epoch, total_loss,acc,lr_scheduler.get_last_lr()))
         writer.add_scalar('train_loss', total_loss, current_iter)
+        #evaluator.eval(model, val_loader, test_loader_list, epoch, writer,osr=True)
+        # # if epoch==50:
+        # #     torch.save({
+        # #         'epoch': epoch,
+        # #         'model_state_dict': model.state_dict(),
+        # #         'optimizer_state_dict': optimizer.state_dict()
+        # #     }, './'+config.exp_name + "_single_epoch50_osr.pth"'')
+        if epoch>=50:
+            overall_test(evaluator,model, val_loader, test_loader_list, epoch, writer)
+        save_path=os.path.join(exp_path,config.exp_name + "_osr.pth")
+        torch.save(model.state_dict(), save_path)
 
-    save_path=os.path.join(exp_path,config.exp_name + "_osr.pth")
-    torch.save(model, save_path)
+def overall_test(evaluator,model, val_loader, test_loader_list, epoch, writer):
+    #print("using openmax processor------")
+    #evaluator.openmax_processor(val_loader, test_loader_list, model,epoch,writer)
+    print("using MaxLogit processor-----")
+    evaluator.eval(model, val_loader, test_loader_list, epoch, writer, osr=True)
 
 
 def main_worker(config):
     device, available_gpus=get_available_devices()
-    train_classes, open_set_classes = get_class_splits("voc")
-    model = Net(config.models).to(device)
-    visualization=hydra_zen.instantiate(config.visualizations)
+    train_classes, open_set_classes = get_class_splits("coco")
+    model = Net(config.models, checkpoint_path=config.Discovery_weights).to(device)
 
-    params = model.get_trainable_params_groups(different_lr=True)
-    if len(params) > 1:
-        params[0]['lr'] = 0.001
-    optimizer = optim.Adam(params, lr=0.01)
-    datasets = get_datasets(name="voc")
+    visualization=hydra_zen.instantiate(config.visualizations, _convert_="all")
+
+    datasets = get_datasets(name="coco")
     dataloaders = {}
     for k, v, in datasets.items():
         shuffle = True if k == 'train' else False
-        dataloaders[k] = DataLoader(v, batch_size=64,
+        batch_size = 256 if "test" in k else 64
+        dataloaders[k] = DataLoader(v, batch_size=batch_size,
                                     shuffle=shuffle, sampler=None, num_workers=0)
 
     trainloader = dataloaders['train']
     valloader = dataloaders['val']
-    testloader = dataloaders['test']
+    dataloaders.pop('train')
+    dataloaders.pop('val')
 
-
-    OSR_fit(config.trainer,model,optimizer,trainloader,valloader,testloader,len(train_classes),visualization,device)
+    OSR_fit(config.trainer,model,trainloader,valloader,dataloaders,len(train_classes),visualization,device)
 if __name__ == "__main__":
     import os
-
     os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
-    cfg = OmegaConf.load("./configs/classification_config.yaml")
+    cfg = OmegaConf.load("configs/single_coco_classification_config.yaml")
     main_worker(cfg)

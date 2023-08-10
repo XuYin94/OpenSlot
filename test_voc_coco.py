@@ -78,7 +78,7 @@ data_root = "D:\\datasets\\VOC\\VOCdevkit\\VOC2012"
 voc_set = Voc.VOC_Dataset(split=val_split, data_root=data_root, transform=trans)
 voc_dataloader = DataLoader(voc_set, batch_size=2, shuffle=True, num_workers=0)
 data_root = "D:\\datasets\\coco\\2014\\"
-data_list = "D:\\datasets\\coco\\2014\\train14.txt"
+data_list = "D:\\datasets\\coco\\2014\\coco_multi_train.txt"
 gt_mask = "D:\\datasets\\coco\\2014\\mask\\"
 COCO_set = coco.COCO14SegmentationDataset(img_name_list_path=data_list, label_dir=gt_mask, coco14_root=data_root,
                                      transform=trans)

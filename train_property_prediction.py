@@ -82,7 +82,7 @@ denormalize = transform.DeNormalize(std=[0, 0, 0],
                                                mean=[0, 0, 0])
 split = 'train_aug'
 data_root = "D:\\datasets\\VOC\\VOCdevkit\\VOC2012"
-data_list = "D:\\datasets\\VOC\\VOCdevkit\\VOC2012\\ImageSets\\Segmentation\\train_aug.txt"
+data_list = "D:\\datasets\\VOC\\VOCdevkit\\VOC2012\\ImageSets\\Segmentation\\voc_multi_train.txt"
 
 train_split = 'train_aug'
 val_split='val_aug'

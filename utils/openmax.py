@@ -72,6 +72,14 @@ class Evaluation(object):
         precision, recall, _, _ = precision_recall_fscore_support(self.label, self.predict, average=average)
         return precision, recall
 
+
+    def _average_precision_score(self):
+        return 0
+
+    def _open_set_classifcation_rate(self):
+        return 0
+
+
     def _area_under_roc(self, prediction_scores: np.array = None, multi_class='ovo') -> float:
         """
         Area Under Receiver Operating Characteristic Curve
@@ -228,8 +236,7 @@ def openmax(weibull_model, categories, input_score, eu_weight, alpha=10, distanc
     scores_u = np.asarray(scores_u)
 
     openmax_prob = np.array(compute_openmax_prob(scores, scores_u))
-    softmax_prob = softmax(np.array(input_score.ravel()))
-    return openmax_prob, softmax_prob
+    return openmax_prob
 
 
 def compute_channel_distances(mavs, features, eu_weight=0.5):
@@ -250,34 +257,30 @@ def compute_channel_distances(mavs, features, eu_weight=0.5):
     return {'eucos': np.array(eucos_dists), 'cosine': np.array(cos_dists), 'euclidean': np.array(eu_dists)}
 
 
-def compute_train_score_and_mavs_and_dists(train_class_num,trainloader,net):
+def compute_train_score_and_mavs_and_dists(train_class_num,trainloader,model):
     scores = [[] for _ in range(train_class_num)]
     with torch.no_grad():
         for batch_idx, sample in enumerate(trainloader):
-            img = sample['img'].cuda()
-            labels = sample['label'].cuda()
-            # this must cause error for cifar
-            _, outputs = net(img)
-            single_slot_scores=get_correct_slot(outputs)
-            for score, t in zip(single_slot_scores, labels):
-                # print(f"torch.argmax(score) is {torch.argmax(score)}, t is {t}")
-                if torch.argmax(score) == t:
-                    scores[t].append(score.unsqueeze(dim=0).unsqueeze(dim=0))
+            for key, values in sample.items():
+                sample[key] = values.cuda()
+
+            slots,logits,indices,__= model(sample)
+            labels=sample['class_label']
+            for  idx,(score, t,label,indice) in enumerate(zip(slots,logits, labels,indices)):
+
+                cls_indices=torch.nonzero(label)[:,1]
+                for i in range(indice.shape[-1]):
+                    if indice[0,i]<len(cls_indices): # check if the indice stand for a valid class
+                        determined_logit=t[indice[1,i]]
+                        target_cls=cls_indices[indice[0,i]]
+                        if torch.argmax(determined_logit) == target_cls:
+                            scores[target_cls].append(determined_logit.unsqueeze(dim=0).unsqueeze(dim=0))
+
     scores = [torch.cat(x).cpu().numpy() for x in scores]  # (N_c, 1, C) * C
     mavs = np.array([np.mean(x, axis=0) for x in scores])  # (C, 1, C)
     dists = [compute_channel_distances(mcv, score) for mcv, score in zip(mavs, scores)]
     return scores, mavs, dists
 
 
-def get_correct_slot(slots,using_softmax=False):
-    ##slots: [b,num_slots,num_classes]
-    b,num_slots,num_classes=slots.shape
-    if using_softmax:
-        slots=torch.softmax(slots,dim=-1)  ## [b,num_slots,num_classes]
-    __, pred = torch.max(slots.flatten(1, 2), dim=-1)
-    indices=pred// num_classes
-    correct_slots_list=[]
-    for idx in range(slots.shape[0]):
-        correct_slots_list.append(slots[idx,indices[idx]])
-    return torch.stack(correct_slots_list,dim=0) ## [b,num_classes]
+
 

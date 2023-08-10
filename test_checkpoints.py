@@ -7,7 +7,7 @@ import yaml
 import  torch.nn as nn
 from omegaconf import DictConfig, OmegaConf
 
-cfg=OmegaConf.load("configs/config.yaml")
+cfg=OmegaConf.load("configs/patch_decoder.yaml")
 from ocl.utils.routing import Combined
 models = hydra_zen.instantiate(cfg.models, _convert_="all")
 models=nn.ModuleDict(models)
@@ -18,7 +18,7 @@ print(models)
 #     models = Combined(**models)
 # for name, module in models.items():
 #     print(name)
-checkpoint=torch.load("checkpoints/model_final.ckpt")["state_dict"]
+checkpoint=torch.load("checkpoints/Dis_full_coco_patch_decoder.ckpt")["state_dict"]
 for key in list(checkpoint.keys()):
     if 'models.' in key:
         checkpoint[key.replace('models.', '')] = checkpoint[key]

@@ -4,6 +4,7 @@ import models.vision_transformer as vits
 import models.resnet_s as resnet
 import scipy
 import hydra_zen
+import math
 import torch.nn as nn
 from typing import Any, Dict, Optional
 import torchvision
@@ -17,7 +18,7 @@ from omegaconf import DictConfig, OmegaConf
 from ocl.utils.routing import Combined
 
 class Net(nn.Module):
-    def __init__(self,model_config,checkpoint_path="D:\\Open_world_recognition_with_object_centric_learning\\saved_models\\Discovery\\osr_voc_transformer_decoder\\model_final.ckpt"):
+    def __init__(self,model_config,checkpoint_path="./checkpoints/model_final.ckpt"):
         super().__init__()
         model = hydra_zen.instantiate(model_config, _convert_="all")
         # print(models)
@@ -36,15 +37,20 @@ class Net(nn.Module):
                 checkpoint[key.replace('models.', '')] = checkpoint[key]
                 del checkpoint[key]
         module_dict=dict( ('.'.join(key.split('.')[1:]), value) for (key, value) in checkpoint.items() if 'feature_extractor' in key)
-        self.feature_extractor.load_state_dict(module_dict)
+        msg=self.feature_extractor.load_state_dict(module_dict)
+        #print(msg)
         module_dict=dict( ('.'.join(key.split('.')[1:]), value) for (key, value) in checkpoint.items() if 'perceptual_grouping' in key)
-        self.perceptual_grouping.load_state_dict(module_dict)
+        msg=self.perceptual_grouping.load_state_dict(module_dict)
+        #print(msg)
         module_dict=dict( ('.'.join(key.split('.')[1:]), value) for (key, value) in checkpoint.items() if 'conditioning' in key)
-        self.conditioning.load_state_dict(module_dict)
+        msg=self.conditioning.load_state_dict(module_dict)
+        #print(msg)
         module_dict=dict( ('.'.join(key.split('.')[1:]), value) for (key, value) in checkpoint.items() if 'decoder' in key)
-        self.decoder.load_state_dict(module_dict)
+        msg=self.decoder.load_state_dict(module_dict)
+        #print(msg)
 
-    def forward(self, images,target=None):
+    def forward(self, sample):
+        images=sample["img"]
         batch_size = images.shape[0]
 
         features = self.feature_extractor(video=images)
@@ -55,14 +61,14 @@ class Net(nn.Module):
         )
         slots = perceptual_grouping_output.objects
         pred=self.osr_classifier(slots)
-        if target is not None:
-            matching_loss,__=self.__hungarianMatching(pred,target)
-            return slots,pred,matching_loss
+        if 'class_label' in sample:
+            class_label = sample['class_label'].cuda()
+            slot_selection = sample['fg_channel'].cuda()
+            matching_loss,indices=self.__loss_matcher(pred,class_label,slot_selection)
+            return slots,pred,indices,matching_loss
         else:
-            return slots,pred
+            return slots,pred,torch.inf,torch.inf
 
-
-        return pred
 
     def get_slot_attention_mask(self,images):
         batch_size = images.shape[0]
@@ -75,9 +81,6 @@ class Net(nn.Module):
         object_features = perceptual_grouping_output.objects
         feature_attributes=perceptual_grouping_output.feature_attributions
 
-        # print(type(feature_attributes))
-        # print(type(object_features))
-        # print(type(target))
 
         output=self.decoder(object_features,feature_attributes,target,images)
         return output
@@ -92,38 +95,51 @@ class Net(nn.Module):
                                 {'params': filter(lambda p: p.requires_grad, self.osr_classifier.parameters())}]
         else:
             set_trainable([self.conditioning,self.perceptual_grouping], False)
-            trainable_params=filter(lambda p: p.requires_grad, self.osr_classifier.parameters())
+            trainable_params=[{'params': filter(lambda p: p.requires_grad, self.osr_classifier.parameters())}]
         return trainable_params
 
-    def __hungarianMatching(self,class_pred, targets):
+    def __loss_matcher(self,class_pred, targets,selected_slots):
 
         """
         match the slot-level prediction with the ground truth
         "class_pred: [batch,num_slot,num_classes]"
         "targets: [batch,max_num_object, num_classes], after one-hot encoding"
+        Returns:
+            indices:
+                The first column the indices of the true categories while the second
+                column is the the indices of the slots.
         """
         class_pred=class_pred.unsqueeze(1) ##[batch,1, num_slot, num_classes]
-        targets=targets.unsqueeze(2) ##[batch,max_num_object,1,num_classes]
+        targets = targets.unsqueeze(2)
         cost_matrix=(-(targets * class_pred.log_softmax(dim=-1))).sum(dim=-1)
+
+        device = class_pred.device
+        weight_matrix=cost_matrix*selected_slots+100000 * (1 - selected_slots)
+        __, indices = self.__hungarianMatching(weight_matrix)
+        #print(smallest_cost_matrix.shape)
+        batch_range = torch.arange(cost_matrix.shape[0]).unsqueeze(-1)
+        loss_per_object =cost_matrix[batch_range, indices[:, 0], indices[:, 1]]
+        return loss_per_object.sum().to(device),indices
+
+    def __hungarianMatching(self,weight_matrix):
         indices = np.array(
-            list(map(scipy.optimize.linear_sum_assignment, cost_matrix.cpu().detach().numpy())))
+            list(map(scipy.optimize.linear_sum_assignment, weight_matrix.cpu().detach().numpy())))
 
         indices = torch.LongTensor(np.array(indices)) ##[batch, 2,min(max_num_object,num_slot)]
-
         smallest_cost_matrix = torch.stack(
             [
-                cost_matrix[i][indices[i, 0], indices[i, 1]]
-                for i in range(cost_matrix.shape[0])
+                weight_matrix[i][indices[i, 0], indices[i, 1]]
+                for i in range(weight_matrix.shape[0])
             ]
         )
-        device=cost_matrix.device
-        return smallest_cost_matrix[:,0].sum().to(device),indices.to(device)
+        device = weight_matrix.device
+        return smallest_cost_matrix.to(device), indices.to(device)
 
 
 if __name__=="__main__":
     #print(timm.list_models(pretrained=True))
     #print(timm.create_model('vit_base_patch16_224',checkpoint_path='../checkpoints/dino_vitbase16_pretrain.pth'))
-    model=Net(model_config="../configs/classification_config.yaml").cuda()
+    model=Net(model_config="../configs/single_voc_classification_config.yaml").cuda()
     model.eval()
     input=torch.rand((2,3,224,224)).cuda()
     params=model.get_trainable_params_groups(different_lr=True)

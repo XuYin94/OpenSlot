@@ -99,18 +99,10 @@ def metric_ood(x1, x2, stypes=['Bas'], verbose=False):
     return results
 
 
-def compute_oscr(pred_k, pred_u, labels,openmax=False):
-    if openmax:
-        pred_k=np.array(pred_k)
-        pred_u=np.array(pred_u)
-        #print(pred_k.shape)
-        #print(pred_u.shape)
-        x1,x2=-1 * pred_k[:, -1],-1 * pred_u[:, -1]
-    else:
-        x1, x2 = np.max(pred_k, axis=1), np.max(pred_u, axis=1)
-
+def compute_oscr(pred_k, pred_u, labels):
+    x1, x2 = np.max(pred_k, axis=1), np.max(pred_u, axis=1)
     pred = np.argmax(pred_k, axis=1)
-    # correct = (pred == labels)
+    correct = (pred == labels)
     m_x1 = np.zeros(len(x1))
     m_x1[pred == labels] = 1
     k_target = np.concatenate((m_x1, np.zeros(len(x2))), axis=0)
@@ -155,4 +147,3 @@ def compute_oscr(pred_k, pred_u, labels,openmax=False):
         OSCR = OSCR + h * w
 
     return OSCR
-

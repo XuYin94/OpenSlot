@@ -23,8 +23,7 @@ from torch.utils.data import Dataset,DataLoader
 from data import Voc
 from utils.evaluator import OSREvaluator
 from utils import transform
-from utils.utils import get_available_devices,log_visualizations,get_correct_slot,\
-    multi_correct_slot,multi_correct_slot_2
+from utils.utils import get_available_devices,log_visualizations,multi_correct_slot
 import warnings
 from torch.optim.lr_scheduler import StepLR
 from datetime import datetime
@@ -53,17 +52,18 @@ def OSR_fit(config,model,train_loader,val_loader,test_loader,nbr_cls,visualizer,
     current_iter = 0
     epoch=0
 
-    path="./checkpoints/multi_voc_osr.pth"
+    path= "checkpoints/multi_voc_osr_75map.pth"
     weight=torch.load(path)
     model.load_state_dict(weight)
-
+    #evaluator.eval(model, val_loader, test_loader, epoch, writer, compute_acc=False)
+    evaluator.openmax_processor(val_loader, test_loader, model,epoch, writer, compute_acc=False)
     while current_iter<config.max_steps:
         model.train()
         total_loss = 0
         gts = []
         preds = []
         #evaluator.openmax_processor(val_loader,test_loader,model)
-        evaluator.eval(model, val_loader, test_loader, epoch, writer,compute_acc=False)
+
         for batch_idx, sample in enumerate(train_loader, 0):
             current_iter += 1
             optimizer.zero_grad()
@@ -74,7 +74,7 @@ def OSR_fit(config,model,train_loader,val_loader,test_loader,nbr_cls,visualizer,
             matching_loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
-            slot_pred=multi_correct_slot_2(logits)
+            slot_pred=multi_correct_slot(logits)
             gt=sample['label'].to(device).cpu().numpy()
             slot_pred=slot_pred.cpu().numpy()
             gts.append(gt)
@@ -98,8 +98,8 @@ def OSR_fit(config,model,train_loader,val_loader,test_loader,nbr_cls,visualizer,
             FinalMAPs.append(metrics.auc(recall, precision))
         print("Train | Epoch: {}, Loss: {:5f}, mAP: {:5f}, LR: {}".format(epoch, total_loss,np.mean(FinalMAPs),lr_scheduler.get_last_lr()))
         writer.add_scalar('train_loss', total_loss, current_iter)
-        if epoch>=50:
-            evaluator.eval(model, val_loader, test_loader, epoch, writer, compute_acc=False)
+        #if epoch>=50:
+            #evaluator.eval(model, val_loader, test_loader, epoch, writer, compute_acc=False)
 
     save_path=os.path.join(exp_path,config.exp_name + "_osr.pth")
     torch.save(model.state_dict(), save_path)
@@ -112,11 +112,11 @@ def main_worker(config):
     #model.load_state_dict(torch.load("./checkpoints/multi_voc_osr.pth"))
     visualization=hydra_zen.instantiate(config.visualizations, _convert_="all")
 
-    datasets = get_multi_ood_datasets(name="voc",ood="imagenet22k")
+    datasets = get_multi_ood_datasets(name="multi_osr",ood="imagenet22k")
     dataloaders = {}
     for k, v, in datasets.items():
         shuffle = True if k == 'train' else False
-        batch_size = 256 if "test" in k  else 64
+        batch_size = 512 if "test" in k  else 256
         dataloaders[k] = DataLoader(v, batch_size=batch_size,
                                     shuffle=shuffle, sampler=None, num_workers=0)
 

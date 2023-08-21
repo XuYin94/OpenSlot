@@ -21,7 +21,7 @@ from torch.utils.data import Dataset,DataLoader
 from data import Voc
 from utils.evaluator import OSREvaluator
 from utils import transform
-from utils.utils import get_available_devices,log_visualizations,get_correct_slot
+from utils.utils import get_available_devices
 import warnings
 from torch.optim.lr_scheduler import StepLR
 from datetime import datetime
@@ -48,66 +48,60 @@ def OSR_fit(config,model,train_loader,val_loader,test_loader_list,nbr_cls,visual
         params[0]['lr'] = 0.01
     optimizer = optim.Adam(params, lr=0.0004)
     lr_scheduler=StepLR(optimizer,step_size=2000,gamma=0.5)
-    evaluator=OSREvaluator(train_loader=train_loader,num_known_classes=nbr_cls,exp_type="single",use_softmax=config.softmax_eval)
+    evaluator=OSREvaluator(train_loader=train_loader,visualizer=visualizer,num_known_classes=nbr_cls,exp_type="single",use_softmax=config.softmax_eval)
     train_epoch_size = len(train_loader)
     #current_iter = 0
     epoch=0
 
     #epoch,optimizer,model=load_checkpoint("./voc_single_epoch50_osr.pth",model,optimizer)
-    # path="./checkpoints/single_coco_osr.pth"
-    # weight=torch.load(path)
-    # model.load_state_dict(weight)
+    path="./checkpoints/single_coco_osr.pth"
+    weight=torch.load(path)
+    model.load_state_dict(weight)
     #optimizer.load_state_dict(torch.load(path)['optimizer_state_dict'])
     # epoch=torch.load(path)['epoch']
 
     current_iter=len(train_loader)*epoch
-    #overall_test(evaluator, model, val_loader, test_loader_list, epoch, writer)
-    while current_iter<config.max_steps:
-        model.train()
-        total_loss = 0
-        correct, total=0,0
-        for batch_idx, sample in enumerate(train_loader, 0):
-            current_iter += 1
-            for key, values in sample.items():
-                sample[key]=values.cuda()
-
-            optimizer.zero_grad()
-            slots, logits,__, matching_loss = model(sample)##mlp_pred: [b,num_slot,num_class]
-
-            matching_loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            optimizer.step()
-            lr_scheduler.step()
-            logits=get_correct_slot(logits,config.softmax_eval)
-            prediction=logits.data.max(1)[1].to(device).cpu().numpy()
-            label=sample['label'].to(device).cpu().numpy()
-            total += label.shape[0]
-            correct += (prediction == label).sum()
-
-            total_loss += matching_loss.item()
-            if batch_idx < train_epoch_size - 1 and current_iter<config.max_steps:
-                del slots, prediction,
-            if current_iter>=config.max_steps:
-                break
-        image=sample["img"].cuda()
-        decoder_output = model.get_slot_attention_mask(image)
-        log_visualizations(visualizer,writer,decoder_output,image,current_iter)
-        epoch+=1
-        total_loss /= train_epoch_size
-        acc = float(correct) * 100. / float(total)
-        print("Train | Epoch: {}, Loss: {:5f}, Acc: {:5f}, LR: {}".format(epoch, total_loss,acc,lr_scheduler.get_last_lr()))
-        writer.add_scalar('train_loss', total_loss, current_iter)
-        #evaluator.eval(model, val_loader, test_loader_list, epoch, writer,osr=True)
-        # # if epoch==50:
-        # #     torch.save({
-        # #         'epoch': epoch,
-        # #         'model_state_dict': model.state_dict(),
-        # #         'optimizer_state_dict': optimizer.state_dict()
-        # #     }, './'+config.exp_name + "_single_epoch50_osr.pth"'')
-        if epoch>=50:
-            overall_test(evaluator,model, val_loader, test_loader_list, epoch, writer)
-        save_path=os.path.join(exp_path,config.exp_name + "_osr.pth")
-        torch.save(model.state_dict(), save_path)
+    overall_test(evaluator, model, val_loader, test_loader_list, epoch, writer)
+    # while current_iter<config.max_steps:
+    #     model.train()
+    #     total_loss = 0
+    #     correct, total=0,0
+    #     #overall_test(evaluator, model, val_loader, test_loader_list, epoch, writer)
+    #     for batch_idx, sample in enumerate(train_loader, 0):
+    #         current_iter += 1
+    #         for key, values in sample.items():
+    #             sample[key]=values.cuda()
+    #
+    #         optimizer.zero_grad()
+    #         slots, logits,__, matching_loss = model(sample)##mlp_pred: [b,num_slot,num_class]
+    #
+    #         matching_loss.backward()
+    #         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+    #         optimizer.step()
+    #         lr_scheduler.step()
+    #         logits=get_correct_slot(logits,config.softmax_eval)
+    #         prediction=logits.data.max(1)[1].to(device).cpu().numpy()
+    #         label=sample['label'].to(device).cpu().numpy()
+    #         total += label.shape[0]
+    #         correct += (prediction == label).sum()
+    #
+    #         total_loss += matching_loss.item()
+    #         if batch_idx < train_epoch_size - 1 and current_iter<config.max_steps:
+    #             del slots, prediction,
+    #         if current_iter>=config.max_steps:
+    #             break
+    #     image=sample["img"].cuda()
+    #     decoder_output = model.get_slot_attention_mask(image)
+    #     log_visualizations(visualizer,writer,decoder_output,image,current_iter)
+    #     epoch+=1
+    #     total_loss /= train_epoch_size
+    #     acc = float(correct) * 100. / float(total)
+    #     print("Train | Epoch: {}, Loss: {:5f}, Acc: {:5f}, LR: {}".format(epoch, total_loss,acc,lr_scheduler.get_last_lr()))
+    #     writer.add_scalar('train_loss', total_loss, current_iter)
+    #     if epoch>=50:
+    #         overall_test(evaluator,model, val_loader, test_loader_list, epoch, writer)
+    #     save_path=os.path.join(exp_path,config.exp_name + "_osr.pth")
+    #     torch.save(model.state_dict(), save_path)
 
 def overall_test(evaluator,model, val_loader, test_loader_list, epoch, writer):
     #print("using openmax processor------")
@@ -118,16 +112,19 @@ def overall_test(evaluator,model, val_loader, test_loader_list, epoch, writer):
 
 def main_worker(config):
     device, available_gpus=get_available_devices()
-    train_classes, open_set_classes = get_class_splits("coco")
+    train_classes, open_set_classes = get_class_splits(config.dataset.name)
     model = Net(config.models, checkpoint_path=config.Discovery_weights).to(device)
 
     visualization=hydra_zen.instantiate(config.visualizations, _convert_="all")
 
-    datasets = get_datasets(name="coco")
+    datasets = get_datasets(name=config.dataset.name)
     dataloaders = {}
     for k, v, in datasets.items():
-        shuffle = True if k == 'train' else False
-        batch_size = 256 if "test" in k else 64
+        if k=='train':
+            shuffle = True
+            batch_size = 256
+        else:
+            shuffle=False
         dataloaders[k] = DataLoader(v, batch_size=batch_size,
                                     shuffle=shuffle, sampler=None, num_workers=0)
 

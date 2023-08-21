@@ -320,7 +320,10 @@ class Multi_label_OSR_dataset(Dataset):
         self.transform=transform
         self.prefix=prefix
         self.exp=exp
-        self.exp_info='./data/osr_splits/'+exp+'/multi/'+exp+'_multi_'+prefix+''
+        if exp=="multi_osr":
+            self.exp_info='./data/osr_splits/'+exp+'/voc2coco17_'+prefix+''
+        else:
+            self.exp_info='./data/osr_splits/'+exp+'/multi/'+exp+'_multi_'+prefix+''
 
         self.img_list=open(r'' + self.exp_info + '.txt').readlines()
         if prefix in ["train","train_aug","val"]:
@@ -344,10 +347,13 @@ class Multi_label_OSR_dataset(Dataset):
         name=self.img_list[index].strip()
         sample={}
         img_path=os.path.join(self.root_dir,name)
+
         image=Image.open(img_path).convert("RGB")
         image=self.transform(image)
         sample['img']=image
+        #print(img_path)
         if self.prefix in ["train","train_aug","val"]:
+
             sample['label'] = self.cls_labels_dict[index]
             label=self.cls_labels_dict[index].nonzero()[0][:self.max_num_object]
             nbr_clss=self.max_num_object if len(label)>self.max_num_object else len(label)
@@ -366,47 +372,81 @@ class Multi_label_OSR_dataset(Dataset):
 
 
 
+voc2coco_map=[4,1,15,8,43,5,2,16,61,20,66,17,18,3,0,63,19,62,6,71]
+def get_non_overlap_coco_img():
+    coco_label_dict=np.concatenate((np.load("./osr_splits/coco/multi/coco17_multi_train_label.npy"),
+                                       np.load("./osr_splits/coco/multi/coco17_multi_val_label.npy")),0)
+    non_overplapped_cls=list(set(range(80)).difference(set(voc2coco_map)))
+    img_list=open(r'./osr_splits/coco/multi/coco17_multi_train.txt').readlines()+open(r'./osr_splits/coco/multi/coco17_multi_val.txt').readlines()
+
+
+    no_mixture_file=open("../voc2coco17_osr_no_mixture.txt", "w+")
+    easy_file = open("../voc2coco17_osr_easy.txt", "w+")
+    #midium_file = open("../voc2coco17_osr_midium.txt", "w+")
+    hard_file = open("../voc2coco17_osr_hard.txt", "w+")
+
+    for i in range(coco_label_dict.shape[0]):
+        voc_cls_sum=coco_label_dict[i,voc2coco_map].sum()
+        non_overlap_cls_sum=coco_label_dict[i,non_overplapped_cls].sum()
+        name=img_list[i].strip()
+        if non_overlap_cls_sum>0: ## contain at least one unknown class
+            wildness=voc_cls_sum/non_overlap_cls_sum
+            if wildness==0:
+                no_mixture_file.writelines(name + "\n")
+            elif wildness<1:
+                easy_file.writelines(name + "\n")
+            elif wildness>1:
+                print(wildness)
+                hard_file.writelines(name+"\n")
+            else:
+                continue
+        else:
+            continue
+
+
+
 
 if __name__=="__main__":
-    voc_name_list = ["aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat", "chair",
-                     "cow", "diningtable", "dog", "horse", "motorbike", "person", "pottedplant", "sheep", "sofa",
-                     "train", "tvmonitor"]
-    coco_name_list = open(r"../data/osr_splits/coco_label_names.txt").readlines()
-
-    voc_known_classes = [0, 2, 6, 7, 11, 14]
-    voc_unknown_classes = [1, 3, 4, 5, 8, 9, 12, 13, 15, 16, 17, 18, 19]
-
-    voc_cls_labels_dict = np.load('../data/cls_labels_voc.npy', allow_pickle=True).item()
-    coco_cls_labels_dict = np.load('../data/cls_labels_coco.npy', allow_pickle=True).item()
-    #create_COCO_osr_class_split(name="COCO",root_path="D:\\datasets\\coco\\2014\\")
-    #create_VOC_osr_class_split(name="voc",root_path="D:\\datasets\\VOC\\VOCdevkit\\VOC2012\\")
-    #VOC_osr_class_split(name="voc",root_path="D:\\datasets\\VOC\\VOCdevkit\\VOC2012\\")
-    #COCO_osr_class_split(name="COCO",root_path="D:\\datasets\\coco\\2014\\")
+    #get_non_overlap_coco_img()
+    # voc_name_list = ["aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat", "chair",
+    #                  "cow", "diningtable", "dog", "horse", "motorbike", "person", "pottedplant", "sheep", "sofa",
+    #                  "train", "tvmonitor"]
+    # coco_name_list = open(r"../data/osr_splits/coco_label_names.txt").readlines()
+    #
+    # voc_known_classes = [0, 2, 6, 7, 11, 14]
+    # voc_unknown_classes = [1, 3, 4, 5, 8, 9, 12, 13, 15, 16, 17, 18, 19]
+    #
+    # voc_cls_labels_dict = np.load('../data/cls_labels_voc.npy', allow_pickle=True).item()
+    # coco_cls_labels_dict = np.load('../data/cls_labels_coco.npy', allow_pickle=True).item()
+    # #create_COCO_osr_class_split(name="COCO",root_path="D:\\datasets\\coco\\2014\\")
+    # #create_VOC_osr_class_split(name="voc",root_path="D:\\datasets\\VOC\\VOCdevkit\\VOC2012\\")
+    # #VOC_osr_class_split(name="voc",root_path="D:\\datasets\\VOC\\VOCdevkit\\VOC2012\\")
+    # #COCO_osr_class_split(name="COCO",root_path="D:\\datasets\\coco\\2014\\")
     trans=transforms.Compose([
                              transforms.Resize((224,224)),
                              transforms.ToTensor(),
                              transforms.Normalize(std=[0.229, 0.224, 0.225],
                                                mean=[0.485, 0.456, 0.406])
                              ])
-    test_dataset=Multi_label_OSR_dataset(data_root="D:\\datasets\\VOC\\VOCdevkit\\test\\VOCdevkit\\VOC2012\\",prefix='test',exp="voc", transform=trans)
-    dataset=Multi_label_OSR_dataset(data_root="D:\\datasets\\VOC\\VOCdevkit\\VOC2012\\",prefix='train',exp="voc", transform=trans)
-    dataloader=DataLoader(dataset, batch_size=8,shuffle=True, sampler=None, num_workers=0)
-
-    from utils import transform
-    #from torchvision import transforms
-
-    # #datasets=Get_OSR_Datasets(train_transform=trans,test_transform=trans,dataroot="D:\\datasets\\VOC\\VOCdevkit\\VOC2012\\",exp="voc")
-    # datasets=Get_OSR_Datasets(train_transform=trans,test_transform=trans,dataroot="D:\\datasets\\coco\\2014\\",exp="coco")
-    # dataloaders = {}
-    # for k, v, in datasets.items():
-    #     shuffle = True if k == 'train' else False
-    #     dataloaders[k] = DataLoader(v, batch_size=8,
-    #                                 shuffle=shuffle, sampler=None, num_workers=0)
-    # #print(datasets['train'][0])
-    # trainloader = dataloaders['train']
-    # testloader = dataloaders['val']
-    # outloader = dataloaders['test']
+    test_dataset=Multi_label_OSR_dataset(data_root="D:\\datasets\\coco\\2017\\",prefix='no_mixture',exp="multi_osr", transform=trans)
+    #dataset=Multi_label_OSR_dataset(data_root="D:\\datasets\\VOC\\VOCdevkit\\VOC2012\\",prefix='train',exp="voc", transform=trans)
+    dataloader=DataLoader(test_dataset, batch_size=8,shuffle=True, sampler=None, num_workers=0)
     #
+    from utils import transform
+    # #from torchvision i"multi_osr"mport transforms
+    #
+    # # #datasets=Get_OSR_Datasets(train_transform=trans,test_transform=trans,dataroot="D:\\datasets\\VOC\\VOCdevkit\\VOC2012\\",exp="voc")
+    # # datasets=Get_OSR_Datasets(train_transform=trans,test_transform=trans,dataroot="D:\\datasets\\coco\\2014\\",exp="coco")
+    # # dataloaders = {}
+    # # for k, v, in datasets.items():
+    # #     shuffle = True if k == 'train' else False
+    # #     dataloaders[k] = DataLoader(v, batch_size=8,
+    # #                                 shuffle=shuffle, sampler=None, num_workers=0)
+    # # #print(datasets['train'][0])
+    # # trainloader = dataloaders['train']
+    # # testloader = dataloaders['val']
+    # # outloader = dataloaders['test']
+    # #
     for loader in [dataloader]:
         val_list = []
         for ii, sample in enumerate(loader):

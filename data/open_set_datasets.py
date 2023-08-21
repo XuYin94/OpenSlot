@@ -45,7 +45,7 @@ class ImageNet22k(torchvision.datasets.ImageFolder):
 
 def get_multi_ood_datasets(name,ood="imagenet22k"):
     root_paths = {
-        "coco": "D:\\datasets\\coco\\2014\\",
+        "coco": "D:\\datasets\\coco\\2017\\",
         "voc": "D:\\datasets\\VOC\\VOCdevkit\\VOC2012\\",
         "voc_test": "D:\\datasets\\VOC\\VOCdevkit\\test\\VOCdevkit\\VOC2012\\",
         "imagenet22k": "D:\datasets\ImageNet-22K"
@@ -65,19 +65,41 @@ def get_multi_ood_datasets(name,ood="imagenet22k"):
         torchvision.transforms.ToTensor(),
         normalize
     ])
-    if name=="voc":
-        train_set=Multi_label_OSR_dataset(data_root=root_paths[name],prefix='train',exp=name, transform=img_transform)
-        #val_set=Multi_label_OSR_dataset(data_root=root_paths,prefix='val',exp=name, transform=img_transform)
-        val_set=Multi_label_OSR_dataset(data_root=root_paths['voc_test'],prefix='test',exp=name, transform=img_transform)
-        test_set = ImageNet22k(root_paths[ood], transform=test_transform)
-    else:
-        train_set=Multi_label_OSR_dataset(data_root=root_paths[name],prefix='train',exp=name, transform=img_transform)
-        val_set=Multi_label_OSR_dataset(data_root=root_paths[name],prefix='test',exp=name, transform=img_transform)
-        test_set = ImageNet22k(root_paths[ood], transform=test_transform)
+    if name=="multi_osr":
+        train_set = Multi_label_OSR_dataset(data_root=root_paths["voc"], prefix='train', exp="voc",
+                                            transform=img_transform)
+        val_set = Multi_label_OSR_dataset(data_root=root_paths['voc_test'], prefix='test', exp="voc",
+                                          transform=img_transform)
+        easy_set=Multi_label_OSR_dataset(data_root=root_paths['coco'], prefix='easy', exp=name,
+                                          transform=img_transform)
+        # midium_set=Multi_label_OSR_dataset(data_root=root_paths['coco'], prefix='midium', exp=name,
+        #                                   transform=img_transform)
+        no_mixture_set=Multi_label_OSR_dataset(data_root=root_paths['coco'], prefix='no_mixture', exp=name,
+                                          transform=img_transform)
+        hard_set=Multi_label_OSR_dataset(data_root=root_paths['coco'], prefix='hard', exp=name,
+                                          transform=img_transform)
+        dataset={"train":train_set,
+                 "val": val_set,
+                 "no_mixture_test": no_mixture_set,
+                 "easy":easy_set,
+                 #"midium":midium_set,
+                 "hard":hard_set}
 
-    dataset={"train":train_set,
-             "val": val_set,
-             "test": test_set}
+    else:
+
+        if name=="voc":
+            train_set=Multi_label_OSR_dataset(data_root=root_paths[name],prefix='train',exp=name, transform=img_transform)
+            #val_set=Multi_label_OSR_dataset(data_root=root_paths,prefix='val',exp=name, transform=img_transform)
+            val_set=Multi_label_OSR_dataset(data_root=root_paths['voc_test'],prefix='test',exp=name, transform=img_transform)
+            test_set = ImageNet22k(root_paths[ood], transform=test_transform)
+        elif name=="coco":
+            train_set=Multi_label_OSR_dataset(data_root=root_paths[name],prefix='train',exp=name, transform=img_transform)
+            val_set=Multi_label_OSR_dataset(data_root=root_paths[name],prefix='test',exp=name, transform=img_transform)
+            test_set = ImageNet22k(root_paths[ood], transform=test_transform)
+
+        dataset={"train":train_set,
+                 "val": val_set,
+                 "test": test_set}
     return dataset
 
 

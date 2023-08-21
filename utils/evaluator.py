@@ -3,13 +3,20 @@ import numpy as np
 from sklearn import metrics
 import tqdm
 import math
-from utils.utils import get_correct_slot,multi_correct_slot_2,multi_correct_slot,slot_max,slot_score,log_visualizations
+from utils.utils import get_highest_slot,multi_correct_slot,slot_max,slot_min,slot_score,log_visualizations
 from utils import evaluation
 from sklearn.metrics import average_precision_score
-from utils.openmax import compute_train_score_and_mavs_and_dists,fit_weibull,openmax,Evaluation
+from utils.openmax import compute_train_score_and_mavs_and_dists,fit_weibull,openmax
+
+get_ood_detector={
+    'slotmax':slot_max,
+    'slotmin':slot_min,
+    'openslot':slot_score
+}
+to_np = lambda x: x.data.cpu().numpy()
 
 class OSREvaluator:
-    def __init__(self,train_loader,visualizer,num_known_classes=7,exp_type="multi",processor="slotmax",use_softmax=False):
+    def __init__(self,train_loader,visualizer,num_known_classes=7,exp_type="multi",processor="slotmin",use_softmax=False):
         super(OSREvaluator, self).__init__()
         self.best_val_loss=math.inf
         self.visualizer=visualizer
@@ -18,14 +25,13 @@ class OSREvaluator:
         self.closed_dataloader=train_loader
         self.exp_type=exp_type
         self.processor=processor
+        self.ood_detector = get_ood_detector[self.processor]
         if exp_type=="multi":
-            self.slot_predictor=multi_correct_slot_2
+            self.slot_predictor=multi_correct_slot
             self.acc_metric="mAP"
-            self.ood_detector = slot_max if self.processor!="openslot" else slot_score
         else:
-            self.slot_predictor=get_correct_slot
+            self.slot_predictor=get_highest_slot
             self.acc_metric="Acc"
-            self.ood_detector = slot_max if self.processor!="openslot" else slot_score
 
 
 
@@ -38,94 +44,69 @@ class OSREvaluator:
             ood_score=torch.inf,
         return slots,in_logits,ood_score,matching_loss
 
-    def get_known_unknown_scores(self,model,in_test_loader, out_test_loader_dict):
-        _pred_k, _labels = [], []
-        _val_ood_scores = []
+    def get_known_unknown_scores(self,model,in_test_loader, out_test_loader_dict,writer,epoch_idx):
+        _k_logits, _labels = [], []
         out_test_key_List = list(out_test_loader_dict.keys())
-        _pred_u = {}
+        _u_logits = {}
         with torch.no_grad():
             for batch_idx, sample in enumerate(in_test_loader):
                 for key, values in sample.items():
                     sample[key] = values.cuda()
-                slots, logits, ood_scores, matching_loss = self.postprocess(model, sample)
+                slots, logits, __, __ = model(sample)
 
-                _pred_k.append(logits.data.cpu().numpy())
-                _val_ood_scores.append(ood_scores.data.cpu().numpy())
-                _labels.append(sample["label"].data.cpu().numpy())
-
-            for out_test_type in out_test_key_List:
-                test_loader = out_test_loader_dict[out_test_type]
-                _pred_u[out_test_type] = []
-                for batch_idx, sample in enumerate(test_loader):
-                    for key, values in sample.items():
-                        sample[key] = values.cuda()
-                    __, __, ood_scores, __ = self.postprocess(model, sample,phase="ood")
-                    _pred_u[out_test_type].append(ood_scores.data.cpu().numpy())
-                _pred_u[out_test_type] = np.concatenate(_pred_u[out_test_type], 0)
-        _pred_k = np.concatenate(_pred_k, 0)
-        _val_ood_scores = np.concatenate(_val_ood_scores, 0)
-
-        return _pred_k,_labels,_pred_u,_val_ood_scores
-
-    def eval(self, model,in_test_loader, out_test_loader_dict,epoch_idx,writer,compute_acc=True,osr=False):
-        _pred_k,_labels=[],[]
-        _val_ood_scores=[]
-        out_test_key_List = list(out_test_loader_dict.keys())
-        _pred_u={}
-        with torch.no_grad():
-            for batch_idx,sample in enumerate(in_test_loader):
-                for key, values in sample.items():
-                    sample[key] = values.cuda()
-                slots,logits,ood_scores,matching_loss = self.postprocess(model, sample)
-
-                _pred_k.append(logits.data.cpu().numpy())
-                _val_ood_scores.append(ood_scores.data.cpu().numpy())
-                _labels.append(sample["label"].data.cpu().numpy())
+                _k_logits.append(logits.data.cpu())
+                _labels.append(sample["label"].data.cpu())
             self.slot_visualization(sample,model,writer,epoch_idx*batch_idx,"val")
             for out_test_type in out_test_key_List:
-                test_loader=out_test_loader_dict[out_test_type]
-                _pred_u[out_test_type]=[]
+                test_loader = out_test_loader_dict[out_test_type]
+                _u_logits[out_test_type] = []
                 for batch_idx, sample in enumerate(test_loader):
                     for key, values in sample.items():
                         sample[key] = values.cuda()
-                    __, __,ood_scores, __ = self.postprocess(model, sample,phase="ood")
-                    _pred_u[out_test_type].append(ood_scores.data.cpu().numpy())
-                _pred_u[out_test_type]=np.concatenate(_pred_u[out_test_type], 0)
+                    __,logits,__ , __ = model(sample)
+                    _u_logits[out_test_type].append(logits.data.cpu())
+                _u_logits[out_test_type] = torch.concatenate(_u_logits[out_test_type], 0)
                 self.slot_visualization(sample, model, writer, epoch_idx * batch_idx,"ood_"+out_test_type)
-        _pred_k = np.concatenate(_pred_k, 0)
-        _val_ood_scores= np.concatenate(_val_ood_scores, 0)
+
+        _k_logits = torch.concatenate(_k_logits, 0)
+        _labels = torch.concatenate(_labels, 0)
+        return _k_logits,_labels,_u_logits
+
+    def eval(self, model,in_test_loader, out_test_loader_dict,epoch_idx,writer,compute_acc=True,osr=False):
+        _known_logits,_labels,_unknown_logits=self.get_known_unknown_scores(model,in_test_loader,out_test_loader_dict,writer,epoch_idx)
+        _correct_slot_logits = to_np(self.slot_predictor(_known_logits))
         if compute_acc:
-            _labels = np.concatenate(_labels, 0)
-            in_accuracy=self.compute_in_test_accuracy(_pred_k,_labels)
+            _labels = to_np(_labels)
+            in_accuracy=self.compute_in_test_accuracy(_correct_slot_logits,_labels)
             writer.add_scalar("val/"+self.acc_metric+"",in_accuracy,epoch_idx)
             print("Val | Epoch: {:d}\t ".format(epoch_idx) + str(
                     self.acc_metric) + " (%): {:.3f}\t".format(in_accuracy))
-
-        for key,u_predictions in _pred_u.items():
+        _known_ood_score=self.ood_detector(_known_logits,self.exp_type)
+        for key,unknown_logit in _unknown_logits.items():
             print("start to evaluate "+key+" ood:")
-            ood_evaluations=self.ood_eval(_val_ood_scores,u_predictions)
+            _unknown_ood_score=self.ood_detector(unknown_logit,self.exp_type)
+            ood_evaluations=self.ood_eval(_known_ood_score,_unknown_ood_score)
             writer.add_scalar(""+key+"/AUPR",ood_evaluations["AUPR"],epoch_idx)
             writer.add_scalar("" + key + "/AUROC", ood_evaluations["AUROC"],epoch_idx)
             writer.add_scalar("" + key + "/FPR@95", ood_evaluations["FPR@95"],epoch_idx)
             if osr:
-                ood_evaluations["OSCR"]=evaluation.compute_oscr(_val_ood_scores,u_predictions,_labels)*100
+                _unknown_slot_logits = to_np(self.slot_predictor(unknown_logit))
+                ood_evaluations["OSCR"]=evaluation.compute_oscr(_correct_slot_logits,_unknown_slot_logits,_labels)*100
                 writer.add_scalar("" + key + "/OSCR",ood_evaluations["OSCR"] ,epoch_idx)
             print("Metrics",{
                 "OOD": ood_evaluations
             })
 
-    def ood_eval(self,k_predictions,u_predictions):
+    def ood_eval(self,k_ood_score,u_ood_score):
+        #if self.exp_type=="single":
+        results = evaluation.metric_ood(k_ood_score, u_ood_score)['Bas']
+        ap_score = average_precision_score([0] * len(k_ood_score) + [1] * len(u_ood_score),
+                                           list(-k_ood_score) + list(-u_ood_score))
+        results['AUPR'] = ap_score*100
+        # else:
+        #     from utils.multi_ood_evaluator import get_multi_ood_results
+        #     results = get_multi_ood_results(k_ood_score, u_ood_score)
 
-        if self.exp_type=="single":            # single-label OOD detction evaluation
-            x1, x2 = np.max(k_predictions, axis=1), np.max(u_predictions, axis=1)
-            results = evaluation.metric_ood(x1, x2)['Bas']
-            ap_score = average_precision_score([0] * len(k_predictions) + [1] * len(u_predictions),
-                                               list(-np.max(k_predictions, axis=-1)) + list(-np.max(u_predictions, axis=-1)))
-            results['AUPR'] = ap_score * 100
-
-        else:
-            from utils.multi_ood_evaluator import get_multi_ood_results
-            results=get_multi_ood_results(k_predictions, u_predictions)
 
         return results
     def compute_in_test_accuracy(self,known_pred,labels):
@@ -154,106 +135,70 @@ class OSREvaluator:
         categories = list(range(0, self.num_known_classes))
         weibull_model = fit_weibull(mavs, dists, categories, 20, "euclidean")
 
-        _pred_k,_labels,_pred_u,_val_ood_scores=self.get_known_unknown_scores(model,test_loader, out_test_loader_dict)
-
+        known_logits,_labels,unknown_logits=self.get_known_unknown_scores(model,test_loader, out_test_loader_dict,writer,epoch_idx)
+        _correct_slot_logits = to_np(self.slot_predictor(known_logits))
         if compute_acc:
-            _labels = np.concatenate(_labels, 0)
-            in_accuracy=self.compute_in_test_accuracy(_pred_k,_labels)
+            _labels = to_np(_labels)
+            in_accuracy=self.compute_in_test_accuracy(_correct_slot_logits,_labels)
             writer.add_scalar("val/"+self.acc_metric+"",in_accuracy,epoch_idx)
             print("Val | Epoch: {:d}\t ".format(epoch_idx) + str(
                     self.acc_metric) + " (%): {:.3f}\t".format(in_accuracy))
-        _val_ood_scores=np.expand_dims(_val_ood_scores,axis=1)
 
 
-            # for alpha in [3]:
-            #     for th in [0.0, 0.5,0.6,0.65,0.7, 0.75, 0.8, 0.85, 0.9,0.95]:
-        open_score_val = []
-        val_predictions = []
-        for idx,score in enumerate(_val_ood_scores):
-            so=openmax(weibull_model, categories, score,
-                             0.5, 3, "euclidean")
+        if self.exp_type=="single":
+            known_logits = np.expand_dims(_correct_slot_logits,1)
+        known_logits=np.expand_dims(known_logits,axis=2)
+        batch,nbr_slot,__,nbr_cls=known_logits.shape
+        open_score_val = np.zeros((batch,nbr_slot,nbr_cls+1))
+        print(open_score_val.shape)
+        for idx,scores in enumerate(known_logits):
+            for i,score in enumerate(scores):
+                print(score.shape)
+                if np.max(np.exp(score)/np.exp(score).sum())>0.95:
+                    so=openmax(weibull_model, categories, score,
+                                     0.5, 3, "euclidean")
 
-            open_score_val.append(so)
-            val_predictions.append(np.argmax(so) if np.max(so) >= 0.90 else self.num_known_classes)
-        open_score_val=np.array(open_score_val)
-        ood_score_val = -1 * open_score_val[:, -1]
+                    open_score_val[idx,i]=so
+        ood_score_val = -1 * np.max(open_score_val[:,:, -1],axis=-1)
 
 
-        #deter_metric=0.
-        for key,u_predictions in _pred_u.items():
-            open_score_test=[]
-            open_score_pred=[]
-            u_predictions=np.expand_dims(u_predictions,axis=1)
+
+        for key,u_predictions in unknown_logits.items():
+            if self.exp_type == "single":
+                u_predictions = np.expand_dims(to_np(self.slot_predictor(u_predictions)),axis=1)
+            open_score_test=np.zeros((u_predictions.shape[0],u_predictions.shape[1],nbr_cls+1))
+            u_predictions=np.expand_dims(u_predictions,axis=2)
             #neg_label=[self.num_known_classes for i in range(u_predictions.shape[0])]
             print("start to evaluate "+key+" ood:")
-            for idx, score in enumerate(u_predictions):
-                so = openmax(weibull_model, categories, score,
-                                               0.5, 3, "euclidean")
 
-                open_score_test.append(so)
+            for idx, scores in enumerate(u_predictions):
+                for i, score in enumerate(scores):
+                    if np.max(np.exp(score) / np.exp(score).sum()) > 0.95:
+                        so = openmax(weibull_model, categories, score,
+                                     0.5, 3, "euclidean")
 
-                open_score_pred.append(np.argmax(so) if np.max(so) >= 0.90 else self.num_known_classes)
+                        open_score_test[idx,i]=so
 
-
-            open_score_test = np.array(open_score_test)
-            ood_score_test=-1 * open_score_test[:, -1]
+            # for idx, score in enumerate(u_predictions):
+            #     so = openmax(weibull_model, categories, score,
+            #                                    0.5, 3, "euclidean")
+            #
+            #     open_score_test.append(so)
+            #
+            #     open_score_pred.append(np.argmax(so) if np.max(so) >= 0.90 else self.num_known_classes)
+            #
+            #
+            # open_score_test = np.array(open_score_test)
+            ood_score_test=-1 * np.max(open_score_test[:,:, -1],axis=-1)
             #x1, x2 = np.max(open_score_val, axis=1), np.max(open_score_test, axis=1)
             results = evaluation.metric_ood(ood_score_val, ood_score_test)['Bas']
             ap_score = average_precision_score([0] * len(ood_score_val) + [1] * len(ood_score_test),
                                                list(-ood_score_val) + list(-ood_score_test))
             results['AUPR'] = ap_score * 100
             #open_score_pred=np.array(open_score_pred)
-            results['OSCR']=evaluation.compute_oscr(open_score_val, open_score_test, _labels,openmax=True)*100
+            #results['OSCR']=evaluation.compute_oscr(open_score_val, open_score_test, _labels,openmax=True)*100
             print(results)
-            #deter_metric +=results['AUROC']
 
-            # if deter_metric > auroc_best:
-            #     tail_best, alpha_best, th_best = tailsize, alpha, th
-            #     auroc_best = deter_metric
-
-        # print("Best params:")
-        # print(tail_best, alpha_best, th_best)
-
-            # eval_openmax = Evaluation(open_pred, open_labels, open_scores)
-            #
-            # print(f"OpenMax accuracy is %.3f" % (eval_openmax.accuracy))
-            # print(f"OpenMax F1 is %.3f" % (eval_openmax.f1_measure))
-            # print(f"OpenMax f1_macro is %.3f" % (eval_openmax.f1_macro))
-            # print(f"OpenMax f1_macro_weighted is %.3f" % (eval_openmax.f1_macro_weighted))
-            # print(f"OpenMax area_under_roc is %.3f" % (eval_openmax.area_under_roc))
-            # print(f"_________________________________________")
-
-        # Get the prdict results.
-        # scores = torch.cat(scores, dim=0).cpu().numpy()
-        # labels = torch.cat(labels, dim=0).cpu().numpy()
-        # scores = np.array(scores)[:, np.newaxis, :]
-        # labels = np.array(labels)
-        #
-        #
-        #
-        # pred_softmax, pred_softmax_threshold, pred_openmax = [], [], []
-        # score_softmax, score_openmax = [], []
-        # for score in scores:
-        #     so, ss = openmax(weibull_model, categories, score,
-        #                      0.5, 3, "euclidean")  # openmax_prob, softmax_prob
-        #     pred_softmax.append(np.argmax(ss))
-        #     pred_softmax_threshold.append(np.argmax(ss) if np.max(ss) >= 0.9 else self.num_known_classes)
-        #     pred_openmax.append(np.argmax(so) if np.max(so) >= 0.9 else self.num_known_classes)
-        #     score_softmax.append(ss)
-        #     score_openmax.append(so)
-        #
-        # print("Evaluation...")
-        # eval_softmax = Evaluation(pred_softmax, labels, score_softmax)
-        # eval_softmax_threshold = Evaluation(pred_softmax_threshold, labels, score_softmax)
-
-        #
-        # print(f"SoftmaxThreshold accuracy is %.3f" % (eval_softmax_threshold.accuracy))
-        # print(f"SoftmaxThreshold F1 is %.3f" % (eval_softmax_threshold.f1_measure))
-        # print(f"SoftmaxThreshold f1_macro is %.3f" % (eval_softmax_threshold.f1_macro))
-        # print(f"SoftmaxThreshold f1_macro_weighted is %.3f" % (eval_softmax_threshold.f1_macro_weighted))
-        # print(f"SoftmaxThreshold area_under_roc is %.3f" % (eval_softmax_threshold.area_under_roc))
-        # print(f"_________________________________________")
-        #
 
     def slot_visualization(self,sample,model,writer,step,phase):
         image = sample['img'].cuda()

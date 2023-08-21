@@ -115,7 +115,7 @@ def apply_leaf(m, f):
 def set_trainable(l, b):
     apply_leaf(l, lambda m: set_trainable_attr(m, b))
 
-def get_correct_slot(slots,using_softmax=False):
+def get_highest_slot(slots,using_softmax=False):
     b,num_slots,num_classes=slots.shape
     if using_softmax:
         slots=torch.softmax(slots,dim=-1)  ## [b,num_slots,num_classes]
@@ -126,10 +126,7 @@ def get_correct_slot(slots,using_softmax=False):
         correct_slots_list.append(slots[idx,indices[idx]])
     return torch.stack(correct_slots_list,dim=0) ## [b,num_classes]
 
-def multi_correct_slot(slots):
-    pred,__=torch.max(slots,dim=1)
-    pred=torch.sigmoid(pred).detach()
-    return pred
+
 
 def slot_score(slots,threshold=0.95,exp_type="single"):
     slot_logits=slots.detach().cpu()
@@ -143,25 +140,27 @@ def slot_score(slots,threshold=0.95,exp_type="single"):
         correct_slots_list.append(slots[idx,indices[idx]])
     return torch.stack(correct_slots_list,dim=0) ## [b,num_classes]
 
-def slot_max(slots,exp_type,phase="val"):
-    if exp_type=="single":
-        return get_correct_slot(slots)
-    else:
-        #batch_size, num_slots, num_classes = slots.shape
-        #output = torch.zeros((batch_size, num_classes))
-        slot_logits = slots.detach().cpu()
-        softmax_slot = torch.softmax(slot_logits, dim=-1)
-        slot_maximum, indices = torch.max(softmax_slot, dim=-1)
-        # if phase=="ood":
-        #     print((slot_maximum>0.95).sum())
-        slot_logits = slot_logits * ((slot_maximum >0.95).unsqueeze(-1))
-        # print(slot_logits.shape)
-        #slot_maximum, indices = torch.max(slot_logits, dim=-1)
-        output,__=torch.max(slot_logits.flatten(1,2),dim=-1)
 
+def slot_min(slot_logits,exp_type):
+    softmax_slot = torch.softmax(slot_logits, dim=-1)
+    soft_maximum, __ = torch.max(softmax_slot, dim=-1)
+    logit_maximum, __ = torch.max(slot_logits, dim=-1)
+    output, __ = torch.min(torch.where(soft_maximum > 0.85, logit_maximum, torch.inf), dim=-1)
+    output[output == torch.inf] = -99999
+
+    return output.cpu().numpy()
+
+def slot_max(slot_logits,exp_type,phase="val"):
+    logits=slot_logits.detach().clone()
+    if exp_type=="single":
+        output= get_highest_slot(logits)
+        output=np.max(output.cpu().numpy(),axis=-1)
+    else:
+        output,__=torch.max(logits.flatten(1,2),dim=-1)
+        output=output.cpu().numpy()
     return output
 
-def multi_correct_slot_2(slots,use_softmax=True,threshold=0.90):
+def multi_correct_slot(slots,use_softmax=True,threshold=0.95):
     batch_size,num_slots,num_classes=slots.shape
     output=torch.zeros((batch_size,num_classes))
     slot_logits=slots.detach().cpu()

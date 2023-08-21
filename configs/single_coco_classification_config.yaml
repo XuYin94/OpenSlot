@@ -7,7 +7,7 @@ trainer:
   softmax_eval: false
 
 dataset:
-  exp_name: coco
+  name: coco
   num_workers: 4
   batch_size: 64
 

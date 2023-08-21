@@ -1,5 +1,5 @@
 trainer:
-  exp_name: voc
+  exp_name: multi_voc
   max_steps: 20000
   log_every_n_epoch: 5
   save_every_n_epoch: 1
@@ -7,7 +7,7 @@ trainer:
   softmax_eval: false
 
 dataset:
-  exp_name: multi_ood_voc
+  name: voc
   num_workers: 4
   batch_size: 64
 
@@ -20,7 +20,7 @@ models:
     feature_level: 12
   conditioning:
     _target_: ocl.conditioning.RandomConditioning
-    n_slots: 6
+    n_slots: 7
     object_dim: 256
 
 

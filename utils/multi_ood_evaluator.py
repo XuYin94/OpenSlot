@@ -9,7 +9,6 @@ from torch.autograd import Variable
 import os.path
 
 recall_level_default = 0.95
-
 class ToLabel(object):
      def __call__(self, inputs):
         return (torch.from_numpy(np.array(inputs)).long())

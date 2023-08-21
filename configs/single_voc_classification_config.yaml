@@ -7,7 +7,7 @@ trainer:
   softmax_eval: false
 
 dataset:
-  exp_name: voc
+  name: voc
   num_workers: 4
   batch_size: 64
 

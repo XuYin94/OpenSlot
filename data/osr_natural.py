@@ -242,8 +242,10 @@ class OSR_dataset(Dataset):
 
         if exp=="voc":
             self.num_known_classes=6
+            self.num_slot=6
         elif exp=="coco":
             self.num_known_classes=20
+            self.num_slot=7
 
     def __get_name_list(self):
         text_file=os.path.join("./data/osr_splits/"+self.exp+"/single/"+self.exp+"_"+self.prefix+"_split.txt")
@@ -288,7 +290,14 @@ class OSR_dataset(Dataset):
             class_label=torch.nn.functional.one_hot(class_label,num_classes=self.num_known_classes)
             sample['class_label']=class_label
             sample['fg_channel']=selected_slots.unsqueeze(1)
-
+            # bg_class_label=torch.zeros((self.num_slot))
+            # bg_class_label[1:]=1
+            # sample['bg_channel']=bg_class_label.unsqueeze(1)
+            #
+            # #bg_class_label=torch.nn.functional.one_hot(torch.as_tensor(bg_class_label,dtype=torch.int64),num_classes=2)
+            # bg_class_label = torch.as_tensor(bg_class_label, dtype=torch.float64).unsqueeze(1)
+            #
+            # sample['bg_class_label']=bg_class_label
         return sample
 
 
@@ -366,6 +375,8 @@ class Multi_label_OSR_dataset(Dataset):
             semantic_label=torch.as_tensor(semantic_label,dtype=torch.int64)
             semantic_label=torch.nn.functional.one_hot(semantic_label,num_classes=self.num_known_classes+1)[:,1:]
             sample['class_label']=semantic_label
+
+
         else:
             sample['label']=torch.tensor(float(np.inf))
         return sample

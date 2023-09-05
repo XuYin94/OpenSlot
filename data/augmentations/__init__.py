@@ -18,7 +18,7 @@ def get_transform(exp_name,transform_type='default', image_size=32, args=None):
                     transforms.ToTensor(),
                     transforms.Resize((224, 224), interpolation=torchvision.transforms.InterpolationMode.BICUBIC,
                                       antialias=True),
-                    transforms.CenterCrop((224, 224)),
+                    #transforms.CenterCrop((224, 224)),
                     transforms.Normalize(std=[0.229, 0.224, 0.225],
                                          mean=[0.485, 0.456, 0.406])
                 ])

@@ -9,7 +9,7 @@ trainer:
 dataset:
   name: voc
   num_workers: 4
-  batch_size: 64
+  batch_size: 256
 
 models:
   feature_extractor:
@@ -51,6 +51,12 @@ models:
     input_dim: ${models.conditioning.object_dim}
     activation_fn: leaky_relu
     nbr_clses: 6
+    initial_layer_norm: true
+  aux_classifier:
+    _target_: ocl.decoding.OSR_classifier
+    input_dim: ${models.conditioning.object_dim}
+    activation_fn: leaky_relu
+    nbr_clses: 1
     initial_layer_norm: true
 
 

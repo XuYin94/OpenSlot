@@ -52,7 +52,13 @@ models:
     activation_fn: leaky_relu
     nbr_clses: 20
     initial_layer_norm: true
-  dis_wieght_path:
+
+  aux_classifier:
+    _target_: ocl.decoding.OSR_classifier
+    input_dim: ${models.conditioning.object_dim}
+    activation_fn: leaky_relu
+    nbr_clses: 2
+    initial_layer_norm: true
 
   object_decoder:
     _target_: ocl.decoding.AutoregressivePatchDecoder

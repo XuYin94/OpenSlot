@@ -20,7 +20,7 @@ models:
     feature_level: 12
   conditioning:
     _target_: ocl.conditioning.RandomConditioning
-    n_slots: 7
+    n_slots: 6
     object_dim: 256
 
 

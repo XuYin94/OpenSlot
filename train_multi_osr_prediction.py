@@ -47,7 +47,7 @@ def OSR_fit(config,model,train_loader,val_loader,test_loader,nbr_cls,visualizer,
         params[0]['lr'] = 0.01
     optimizer = optim.Adam(params, lr=0.01)
     lr_scheduler=StepLR(optimizer,step_size=2000,gamma=0.5)
-    evaluator=OSREvaluator(train_loader=train_loader,visualizer=visualizer,num_known_classes=nbr_cls,exp_type='multi',use_softmax=config.softmax_eval)
+    evaluator=OSREvaluator(train_loader=train_loader,visualizer=visualizer,num_known_classes=nbr_cls,exp_type='multi')
     train_epoch_size = len(train_loader)
     current_iter = 0
     epoch=0
@@ -55,55 +55,58 @@ def OSR_fit(config,model,train_loader,val_loader,test_loader,nbr_cls,visualizer,
     path= "checkpoints/multi_voc_osr_75map.pth"
     weight=torch.load(path)
     model.load_state_dict(weight)
-    #evaluator.eval(model, val_loader, test_loader, epoch, writer, compute_acc=False)
-    evaluator.openmax_processor(val_loader, test_loader, model,epoch, writer, compute_acc=False)
-    while current_iter<config.max_steps:
-        model.train()
-        total_loss = 0
-        gts = []
-        preds = []
-        #evaluator.openmax_processor(val_loader,test_loader,model)
+    overall_test(evaluator,model, val_loader, test_loader, epoch, writer)
+    # evaluator.openmax_processor(val_loader, test_loader, model,epoch, writer, compute_acc=False)
+    # while current_iter<config.max_steps:
+    #     model.train()
+    #     total_loss = 0
+    #     gts = []
+    #     preds = []
+    #     #evaluator.openmax_processor(val_loader,test_loader,model)
+    #
+    #     for batch_idx, sample in enumerate(train_loader, 0):
+    #         current_iter += 1
+    #         optimizer.zero_grad()
+    #         for key, values in sample.items():
+    #             sample[key]=values.cuda()
+    #         slots, logits,__,matching_loss = model(sample)##mlp_pred: [b,num_slot,num_class]
+    #
+    #         matching_loss.backward()
+    #         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+    #         optimizer.step()
+    #         slot_pred=multi_correct_slot(logits)
+    #         gt=sample['label'].to(device).cpu().numpy()
+    #         slot_pred=slot_pred.cpu().numpy()
+    #         gts.append(gt)
+    #         preds.append(slot_pred)
+    #         total_loss += matching_loss.item()
+    #         lr_scheduler.step()
+    #         if batch_idx < train_epoch_size - 1 and current_iter<config.max_steps:
+    #             del slots, logits,
+    #         if current_iter>=config.max_steps:
+    #             break
+    #     image=sample['img'].cuda()
+    #     decoder_output = model.get_slot_attention_mask(image)
+    #     log_visualizations(visualizer,writer,decoder_output,image,current_iter)
+    #     epoch+=1
+    #     total_loss /= train_epoch_size
+    #     FinalMAPs = []
+    #     gts=np.concatenate(gts, 0)
+    #     preds=np.concatenate(preds, 0)
+    #     for i in range(0, nbr_cls):
+    #         precision, recall, thresholds = metrics.precision_recall_curve(gts[:,i], preds[:,i])
+    #         FinalMAPs.append(metrics.auc(recall, precision))
+    #     print("Train | Epoch: {}, Loss: {:5f}, mAP: {:5f}, LR: {}".format(epoch, total_loss,np.mean(FinalMAPs),lr_scheduler.get_last_lr()))
+    #     writer.add_scalar('train_loss', total_loss, current_iter)
+    #     #if epoch>=50:
+    #         #evaluator.eval(model, val_loader, test_loader, epoch, writer, compute_acc=False)
+    #
+    # save_path=os.path.join(exp_path,config.exp_name + "_osr.pth")
+    # torch.save(model.state_dict(), save_path)
 
-        for batch_idx, sample in enumerate(train_loader, 0):
-            current_iter += 1
-            optimizer.zero_grad()
-            for key, values in sample.items():
-                sample[key]=values.cuda()
-            slots, logits,__,matching_loss = model(sample)##mlp_pred: [b,num_slot,num_class]
-
-            matching_loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            optimizer.step()
-            slot_pred=multi_correct_slot(logits)
-            gt=sample['label'].to(device).cpu().numpy()
-            slot_pred=slot_pred.cpu().numpy()
-            gts.append(gt)
-            preds.append(slot_pred)
-            total_loss += matching_loss.item()
-            lr_scheduler.step()
-            if batch_idx < train_epoch_size - 1 and current_iter<config.max_steps:
-                del slots, logits,
-            if current_iter>=config.max_steps:
-                break
-        image=sample['img'].cuda()
-        decoder_output = model.get_slot_attention_mask(image)
-        log_visualizations(visualizer,writer,decoder_output,image,current_iter)
-        epoch+=1
-        total_loss /= train_epoch_size
-        FinalMAPs = []
-        gts=np.concatenate(gts, 0)
-        preds=np.concatenate(preds, 0)
-        for i in range(0, nbr_cls):
-            precision, recall, thresholds = metrics.precision_recall_curve(gts[:,i], preds[:,i])
-            FinalMAPs.append(metrics.auc(recall, precision))
-        print("Train | Epoch: {}, Loss: {:5f}, mAP: {:5f}, LR: {}".format(epoch, total_loss,np.mean(FinalMAPs),lr_scheduler.get_last_lr()))
-        writer.add_scalar('train_loss', total_loss, current_iter)
-        #if epoch>=50:
-            #evaluator.eval(model, val_loader, test_loader, epoch, writer, compute_acc=False)
-
-    save_path=os.path.join(exp_path,config.exp_name + "_osr.pth")
-    torch.save(model.state_dict(), save_path)
-
+def overall_test(evaluator,model, val_loader, test_loader_list, epoch, writer):
+    for method in ["slotenergy","slotmax","slotmin"]:
+        evaluator.eval(model, val_loader, test_loader_list, epoch, writer, compute_acc=False,processor=method)
 
 def main_worker(config):
     device, available_gpus=get_available_devices()
@@ -112,11 +115,11 @@ def main_worker(config):
     #model.load_state_dict(torch.load("./checkpoints/multi_voc_osr.pth"))
     visualization=hydra_zen.instantiate(config.visualizations, _convert_="all")
 
-    datasets = get_multi_ood_datasets(name="multi_osr",ood="imagenet22k")
+    datasets = get_multi_ood_datasets(name="voc",ood="imagenet22k")
     dataloaders = {}
     for k, v, in datasets.items():
         shuffle = True if k == 'train' else False
-        batch_size = 512 if "test" in k  else 256
+        batch_size = 64 if "test" in k  else 64
         dataloaders[k] = DataLoader(v, batch_size=batch_size,
                                     shuffle=shuffle, sampler=None, num_workers=0)
 

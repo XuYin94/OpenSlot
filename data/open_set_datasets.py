@@ -50,8 +50,8 @@ def get_multi_ood_datasets(name,ood="imagenet22k"):
         "voc_test": "D:\\datasets\\VOC\\VOCdevkit\\test\\VOCdevkit\\VOC2012\\",
         "imagenet22k": "D:\datasets\ImageNet-22K"
     }
-    normalize = torchvision.transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
+    # normalize = torchvision.transforms.Normalize(mean=[0.485, 0.456, 0.406],
+    #                                  std=[0.229, 0.224, 0.225])
     # img_transform = torchvision.transforms.Compose([
     #         torchvision.transforms.RandomHorizontalFlip(),
     #         torchvision.transforms.RandomResizedCrop((224, 224), scale=(0.5, 2.0)),
@@ -60,11 +60,11 @@ def get_multi_ood_datasets(name,ood="imagenet22k"):
     #     ])
 
     img_transform,test_transform=get_transform(exp_name="voc")
-    test_transform = torchvision.transforms.Compose([
-        torchvision.transforms.Resize((224, 224)),
-        torchvision.transforms.ToTensor(),
-        normalize
-    ])
+    # test_transform = torchvision.transforms.Compose([
+    #     torchvision.transforms.Resize((224, 224)),
+    #     torchvision.transforms.ToTensor(),
+    #     normalize
+    # ])
     if name=="multi_osr":
         train_set = Multi_label_OSR_dataset(data_root=root_paths["voc"], prefix='train', exp="voc",
                                             transform=img_transform)

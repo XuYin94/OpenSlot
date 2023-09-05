@@ -141,17 +141,32 @@ def slot_score(slots,threshold=0.95,exp_type="single"):
     return torch.stack(correct_slots_list,dim=0) ## [b,num_classes]
 
 
-def slot_min(slot_logits,exp_type):
-    softmax_slot = torch.softmax(slot_logits, dim=-1)
+def slot_min(logits ):
+    logit=logits['fg_logits']
+    softmax_slot = torch.softmax(logit, dim=-1)
     soft_maximum, __ = torch.max(softmax_slot, dim=-1)
-    logit_maximum, __ = torch.max(slot_logits, dim=-1)
+    logit_maximum, __ = torch.max(logit, dim=-1)
     output, __ = torch.min(torch.where(soft_maximum > 0.85, logit_maximum, torch.inf), dim=-1)
     output[output == torch.inf] = -99999
 
     return output.cpu().numpy()
 
-def slot_max(slot_logits,exp_type,phase="val"):
-    logits=slot_logits.detach().clone()
+def slot_energy(logits,exp_type="single"):
+    logits = logits['fg_logits']
+    if exp_type=="single":
+        #logits=get_highest_slot(logits)
+        output=torch.logsumexp(logits.flatten(1,2), dim=1)
+    else:
+        logits=logits.type(torch.float64)
+        energy=torch.log(1+torch.exp(logits))
+        output=torch.sum(energy.flatten(1,2),dim=-1)
+
+    return output.cpu().numpy()
+
+
+
+def slot_max(logits,exp_type="single"):
+    logits=logits['fg_logits'].detach().clone()
     if exp_type=="single":
         output= get_highest_slot(logits)
         output=np.max(output.cpu().numpy(),axis=-1)

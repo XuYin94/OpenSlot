@@ -50,6 +50,7 @@ class Net(nn.Module):
         #print(msg)
 
     def forward(self, sample):
+        output={}
         images=sample["img"]
         batch_size = images.shape[0]
 
@@ -61,16 +62,22 @@ class Net(nn.Module):
         )
         slots = perceptual_grouping_output.objects
         pred=self.osr_classifier(slots)
+
+        output["slots"]=slots
+        output["fg_pred"]=pred
+
         if 'class_label' in sample:
-            class_label = sample['class_label'].cuda()
-            slot_selection = sample['fg_channel'].cuda()
-            matching_loss,indices=self.__loss_matcher(pred,class_label,slot_selection)
-            return slots,pred,indices,matching_loss
-        else:
-            return slots,pred,torch.inf,torch.inf
+            fg_class_label = sample['class_label'].cuda()
+            fg_slot_selection = sample['fg_channel'].cuda()
+            # bg_class_label = sample['bg_class_label'].cuda()
+            # bg_slot_selection = sample['bg_channel'].cuda()
+            fg_matching_loss,fg_indices=self.__loss_matcher(pred,fg_class_label,fg_slot_selection)
+            output["fg_matching_loss"]=fg_matching_loss
+            output["fg_indices"]=fg_indices
+        return output
 
 
-    def get_slot_attention_mask(self,images):
+    def get_slot_attention_mask(self,images,sorted=True,phase="train"):
         batch_size = images.shape[0]
         features = self.feature_extractor(video=images)
         target=features.features
@@ -78,11 +85,23 @@ class Net(nn.Module):
         perceptual_grouping_output = self.perceptual_grouping(
             feature=features, conditioning=conditioning
         )
-        object_features = perceptual_grouping_output.objects
+        object_features = perceptual_grouping_output.objects  ## slots: [batch, num_slots, slot_dim]
         feature_attributes=perceptual_grouping_output.feature_attributions
+        if sorted:
+            # if classifier_type=="bg":
+            #     #logits=torch.softmax(self.aux_classifier(object_features),dim=-1)[:,:,1].unsqueeze(-1) ##logits: [batch,num_slots,num_classes]
+            #     logits = self.aux_classifier(object_features)
+            # else:
+            logits = torch.softmax(self.osr_classifier(object_features),dim=-1) ##logits: [batch,num_slots,num_classes]
+            slot_maximum,__=torch.max(logits,dim=-1)
+            __,slot_indices=torch.sort(slot_maximum,dim=-1)
+            sorted_slots=[object_features[i,slot_indices[i]] for i in range(batch_size)]
+            sorted_slots=torch.stack(sorted_slots,dim=0)
+            output = self.decoder(sorted_slots, feature_attributes, target, images)
+        else:
 
+            output=self.decoder(object_features,feature_attributes,target,images)
 
-        output=self.decoder(object_features,feature_attributes,target,images)
         return output
 
 
@@ -91,11 +110,14 @@ class Net(nn.Module):
 
         if different_lr:
             discovery_params=chain(self.conditioning.parameters(), self.perceptual_grouping.parameters())
+            classifier_params=chain(self.osr_classifier.parameters(),self.aux_classifier.parameters())
             trainable_params = [{'params': filter(lambda p: p.requires_grad, discovery_params)},
-                                {'params': filter(lambda p: p.requires_grad, self.osr_classifier.parameters())}]
+                                {'params': filter(lambda p: p.requires_grad, classifier_params)}]
         else:
-            set_trainable([self.conditioning,self.perceptual_grouping], False)
+            #set_trainable([self.conditioning,self.perceptual_grouping], False)
+            #classifier_params=chain(self.osr_classifier.parameters(),self.aux_classifier.parameters())
             trainable_params=[{'params': filter(lambda p: p.requires_grad, self.osr_classifier.parameters())}]
+
         return trainable_params
 
     def __loss_matcher(self,class_pred, targets,selected_slots):
@@ -109,11 +131,15 @@ class Net(nn.Module):
                 The first column the indices of the true categories while the second
                 column is the the indices of the slots.
         """
-        class_pred=class_pred.unsqueeze(1) ##[batch,1, num_slot, num_classes]
-        targets = targets.unsqueeze(2)
-        cost_matrix=(-(targets * class_pred.log_softmax(dim=-1))).sum(dim=-1)
 
+        if class_pred.shape[-1]==1:
+            cost_matrix = nn.BCEWithLogitsLoss(reduction='none')(class_pred,targets)
+        else:
+            class_pred = class_pred.unsqueeze(1)  ##[batch,1, num_slot, num_classes]
+            targets = targets.unsqueeze(2)
+            cost_matrix=(-(targets * class_pred.log_softmax(dim=-1))).sum(dim=-1)
         device = class_pred.device
+        #print(selected_slots.shape)
         weight_matrix=cost_matrix*selected_slots+100000 * (1 - selected_slots)
         __, indices = self.__hungarianMatching(weight_matrix)
         #print(smallest_cost_matrix.shape)

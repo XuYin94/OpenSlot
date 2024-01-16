@@ -1,6 +1,6 @@
 trainer:
-  exp_name: voc
-  max_steps: 50000
+  exp_name: multi_voc
+  max_steps: 30000
   log_every_n_epoch: 5
   save_every_n_epoch: 1
   log_root_path: ./log
@@ -70,7 +70,7 @@ models:
       return_attention_weights: true
 
 
-Discovery_weights: ./checkpoints/Dis_full_coco.ckpt
+Discovery_weights: ./checkpoints/discovery/Dis_full_coco.ckpt
 visualizations:
   input:
     _target_: ocl.visualizations.Image
@@ -94,13 +94,5 @@ experiment:
 
 
 optimizers:
-  _target_: ocl.optimization.OptimizationWrapper
-  optimizer:
-    _target_: torch.optim.Adam
-    _partial_: true
-    lr: 0.01
-  lr_scheduler:
-    _target_: torch.optim.lr_scheduler.StepLR
-    _partial_: true
-    gamma: 0.5
-    step_size: 2000
+  lr_rate: 0.01
+  step_size: 3000

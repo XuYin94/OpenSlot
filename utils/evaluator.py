@@ -3,17 +3,20 @@ import numpy as np
 from sklearn import metrics
 import tqdm
 import math
-from utils.utils import get_highest_slot,multi_correct_slot,slot_max,\
-    slot_energy,slot_min,slot_score,log_visualizations
+from utils.utils import get_highest_slot,multi_correct_slot,slot_max,slot_msp,\
+    slot_energy,slot_min,log_visualizations,slot_entropy,get_Mahalanobis_score,get_odin_score,slot_jointenergy
 from utils import evaluation
+from utils.Mahalanobis_score import sample_estimator
 from sklearn.metrics import average_precision_score
 from utils.openmax import compute_train_score_and_mavs_and_dists,fit_weibull,openmax
 
 get_ood_detector={
+    'slotentropy': slot_entropy,
+    'slotmsp':slot_msp,
     'slotmax':slot_max,
     'slotmin':slot_min,
-    'openslot':slot_score,
-    'slotenergy':slot_energy
+    'slotenergy':slot_energy,
+    'slotjointenergy': slot_jointenergy
 }
 to_np = lambda x: x.data.cpu().numpy()
 
@@ -28,48 +31,60 @@ class OSREvaluator:
 
 
     def get_known_unknown_scores(self,model,in_test_loader, out_test_loader_dict,writer,epoch_idx):
-        _k_logits, _labels,_k_bg_logits = [], [],[]
+        _k_logits, _labels = [], []
+        _k_valid_slots=[]
+        _k_bg_logits=[]
         out_test_key_List = list(out_test_loader_dict.keys())
         _u_logits = {}
-        #_u_bg_logits={}
+        _u_valid_slots={}
+        _u_bg_logits={}
         with torch.no_grad():
             val_img_list=[]
             for batch_idx, sample in enumerate(in_test_loader):
                 for key, values in sample.items():
                     sample[key] = values.cuda()
                 outputs = model(sample)
-                slots, logits= outputs["slots"], outputs["fg_pred"]
+                slots, logits,valid_slots,bg_logits= \
+                    outputs["slots"], outputs["fg_pred"],outputs["valid_slots"],outputs["bg_pred"]
                 _k_logits.append(logits.data.cpu())
-                #_k_bg_logits.append(bg_logits.data.cpu())
+                _k_valid_slots.append(valid_slots.data.cpu())
+                _k_bg_logits.append(bg_logits.data.cpu())
                 _labels.append(sample["label"].data.cpu())
-                val_img_list.append(sample["img"][:3].cuda())
+                if len(val_img_list)<5:
+                    val_img_list.append(sample["img"][:3].cuda())
             val_img_list=torch.concatenate(val_img_list,0)
             self.slot_visualization(val_img_list,model,writer,epoch_idx*batch_idx,"val")
             for out_test_type in out_test_key_List:
                 test_loader = out_test_loader_dict[out_test_type]
                 _u_logits[out_test_type] = []
-                #_u_bg_logits[out_test_type] = []
+                _u_valid_slots[out_test_type]=[]
+                _u_bg_logits[out_test_type] = []
                 ood_img_list=[]
                 for batch_idx, sample in enumerate(test_loader):
                     for key, values in sample.items():
                         sample[key] = values.cuda()
                     outputs = model(sample)
-                    slots, logits= outputs["slots"], outputs["fg_pred"]
+                    slots, logits, valid_slots, bg_logits = \
+                        outputs["slots"], outputs["fg_pred"], outputs["valid_slots"], outputs["bg_pred"]
                     _u_logits[out_test_type].append(logits.data.cpu())
-                    #_u_bg_logits[out_test_type].append(bg_logits.data.cpu())
-                    ood_img_list.append(sample["img"][:3].cuda())
+                    _u_valid_slots[out_test_type].append(valid_slots.data.cpu())
+                    _u_bg_logits[out_test_type].append(bg_logits.data.cpu())
+                    if len(ood_img_list) < 5:
+                        ood_img_list.append(sample["img"][:3].cuda())
                 _u_logits[out_test_type] = torch.concatenate(_u_logits[out_test_type], 0)
-                #_u_bg_logits[out_test_type] = torch.concatenate(_u_bg_logits[out_test_type], 0)
+                _u_valid_slots[out_test_type] = torch.concatenate(_u_valid_slots[out_test_type], 0)
+                _u_bg_logits[out_test_type] = torch.concatenate(_u_bg_logits[out_test_type], 0)
                 ood_img_list=torch.concatenate(ood_img_list,dim=0)
                 self.slot_visualization(ood_img_list, model, writer, epoch_idx * batch_idx,"ood_"+out_test_type)
 
         _k_logits = torch.concatenate(_k_logits, 0)
-        #_k_bg_logits=torch.concatenate(_k_bg_logits,0)
+        _k_valid_slots=torch.concatenate(_k_valid_slots,0)
+        _k_bg_logits=torch.concatenate(_k_bg_logits,0)
         _labels = torch.concatenate(_labels, 0)
-        return _k_logits,_labels,_u_logits
+        return _k_logits,_k_valid_slots,_k_bg_logits,_labels,_u_logits,_u_bg_logits,_u_valid_slots
 
     def eval(self, model,in_test_loader, out_test_loader_dict,epoch_idx,writer,processor="slot_energy",compute_acc=True,oscr=False):
-        _known_logits,_labels,_unknown_logits=\
+        _known_logits,_known_valid_slots,_known_bg_logits,_labels,_unknown_logits,_unknown_bg_logits,_unknown_valid_slots=\
             self.get_known_unknown_scores(model,in_test_loader,out_test_loader_dict,writer,epoch_idx)
 
         if compute_acc:
@@ -89,30 +104,47 @@ class OSREvaluator:
         for method in processor:
             self.ood_detector = get_ood_detector[method]
             print("using "+str(method)+" processor-----")
+            best_auroc=0.0
+            best_parameter={}
+            for fg_temperature in [1]:
+                for bg_threshold in [0.05,0.25,0.50,0.75]:#[0.5,0.55,0.60,0.65,0.70,0.75,0.80,0.85,0.90,0.95]
+                    print("Using fg_temperature "+str(fg_temperature)+" and threshold "+str(bg_threshold)+"")
+                    known_logits={
+                        'fg_logits':_known_logits,
+                        'valid_slots': _known_valid_slots,
+                        'bg_logits':_known_bg_logits
+                    }
+                    _known_ood_score=self.ood_detector(known_logits,fg_temperature,bg_threshold)
+                    for key,unknown_logit in _unknown_logits.items():
+
+                        print("start to evaluate "+key+" ood:")
+                        unknown_logits = {
+                            'fg_logits': unknown_logit,
+                            'valid_slots': _unknown_valid_slots[key],
+                            'bg_logits': _unknown_bg_logits[key]
+                        }
+                        _unknown_ood_score=self.ood_detector(unknown_logits,fg_temperature,bg_threshold)
+
+                        ood_evaluations=self.ood_eval(_known_ood_score,_unknown_ood_score)
+                        if oscr:
+                            _unknown_slot_logits = to_np(self.slot_predictor(unknown_logit))
+                            ood_evaluations["OSCR"] = evaluation.compute_oscr(_correct_slot_logits,
+                                                                                _unknown_slot_logits, _labels) * 100
+                            writer.add_scalar("" + key + "/OSCR", ood_evaluations["OSCR"], epoch_idx)
+                        print("Metrics",{
+                            "OOD": ood_evaluations
+                        })
+                        if ood_evaluations["AUROC"]>best_auroc:
+                            best_auroc=ood_evaluations["AUROC"]
+                            best_parameter["fg_t"]=fg_temperature
+                            best_parameter["threshold"]=bg_threshold
+            print(best_auroc)
+            print(best_parameter)
+                # writer.add_scalar(""+key+"/AUPR",ood_evaluations["AUPR"],epoch_idx)
+                # writer.add_scalar("" + key + "/AUROC", ood_evaluations["AUROC"],epoch_idx)
+                # writer.add_scalar("" + key + "/FPR@95", ood_evaluations["FPR@95"],epoch_idx)
 
 
-            known_logits={
-                'fg_logits':_known_logits
-            }
-            _known_ood_score=self.ood_detector(known_logits)
-            for key,unknown_logit in _unknown_logits.items():
-                print("start to evaluate "+key+" ood:")
-                unknown_logits = {
-                    'fg_logits': unknown_logit
-                }
-                _unknown_ood_score=self.ood_detector(unknown_logits)
-
-                ood_evaluations=self.ood_eval(_known_ood_score,_unknown_ood_score)
-                writer.add_scalar(""+key+"/AUPR",ood_evaluations["AUPR"],epoch_idx)
-                writer.add_scalar("" + key + "/AUROC", ood_evaluations["AUROC"],epoch_idx)
-                writer.add_scalar("" + key + "/FPR@95", ood_evaluations["FPR@95"],epoch_idx)
-                if oscr:
-                    _unknown_slot_logits = to_np(self.slot_predictor(unknown_logit))
-                    ood_evaluations["OSCR"]=evaluation.compute_oscr(_correct_slot_logits,_unknown_slot_logits,_labels)*100
-                    writer.add_scalar("" + key + "/OSCR",ood_evaluations["OSCR"] ,epoch_idx)
-                print("Metrics",{
-                    "OOD": ood_evaluations
-                })
 
     def ood_eval(self,k_ood_score,u_ood_score):
         #if self.exp_type=="single":
@@ -218,4 +250,36 @@ class OSREvaluator:
         log_visualizations(self.visualizer, writer, decoder_output, img_list, step,phase=phase)
 
 
-    #def
+    def Mahalanobis_score_eval(self, model,in_test_loader, out_test_loader_dict):
+        out_test_key_List = list(out_test_loader_dict.keys())
+        sample_mean, precision = sample_estimator(model, self.num_known_classes, self.closed_dataloader)
+        pack = (sample_mean, precision)
+        noise=0.0
+        _known_ood_score = get_Mahalanobis_score(model, in_test_loader, pack, noise,self.num_known_classes)
+        _known_ood_score=np.array(_known_ood_score)
+        for key in out_test_key_List:
+            print("start to evaluate " + key + " ood:")
+            _unknown_ood_score = get_Mahalanobis_score(model, out_test_loader_dict[key], pack, noise,self.num_known_classes)
+            _unknown_ood_score=np.array(_unknown_ood_score)
+            ood_evaluations =self.ood_eval(_known_ood_score,_unknown_ood_score)
+
+            print("Metrics", {
+                "OOD": ood_evaluations
+            })
+
+
+    def Odin_score_eval(self, model,in_test_loader, out_test_loader_dict):
+        out_test_key_List = list(out_test_loader_dict.keys())
+
+        _known_ood_score = get_odin_score(model, in_test_loader, "max",1,0.0)
+        _known_ood_score=np.array(_known_ood_score)
+        for key in out_test_key_List:
+            print("start to evaluate " + key + " ood:")
+            _unknown_ood_score = get_odin_score(model, out_test_loader_dict[key],"max",1,0.0)
+            _unknown_ood_score=np.array(_unknown_ood_score)
+            ood_evaluations =self.ood_eval(_known_ood_score,_unknown_ood_score)
+
+            print("Metrics", {
+                "OOD": ood_evaluations
+            })
+

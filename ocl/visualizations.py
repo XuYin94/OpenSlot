@@ -61,8 +61,8 @@ class Image(VisualizationMethod):
 
     def __init__(
         self,
-        n_instances: int = 8,
-        n_row: int = 8,
+        n_instances: int = 15,
+        n_row: int = 15,
         denormalization: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
         as_grid: bool = True,
     ):
@@ -78,7 +78,6 @@ class Image(VisualizationMethod):
         self.n_row = n_row
         self.denormalization = denormalization if denormalization else _nop
         self.as_grid = as_grid
-
     def __call__(
         self, image: torch.Tensor
     ) -> Union[visualization_types.Image, visualization_types.Images]:
@@ -145,7 +144,7 @@ class Video(VisualizationMethod):
 class Mask(VisualizationMethod):
     def __init__(
         self,
-        n_instances: int = 8,
+        n_instances: int = 15,
         fps: int = 10,
     ):
         """Initialize mask visualization.
@@ -194,6 +193,7 @@ class Mask(VisualizationMethod):
             # Monochrome image with single channel.
             masks = masks.view(-1, 1, *image_shape)
             # Draw masks inverted as they are easier to print.
+            
             return visualization_types.Image(make_grid(1.0 - masks, nrow=n_objects))
         else:
             raise RuntimeError("Unsupported tensor dimensions.")
@@ -202,7 +202,7 @@ class Mask(VisualizationMethod):
 class VisualObject(VisualizationMethod):
     def __init__(
         self,
-        n_instances: int = 8,
+        n_instances: int = 15,
         denormalization: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
         fps: int = 10,
     ):
@@ -304,7 +304,7 @@ class Segmentation(VisualizationMethod):
 
     def __init__(
         self,
-        n_instances: int = 8,
+        n_instances: int = 15,
         denormalization: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
     ):
         """Initialize segmentation visualization.

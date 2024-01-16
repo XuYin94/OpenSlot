@@ -139,7 +139,8 @@ def train(config: TrainingConfig):
     if config.trainer.logger is not False:
         lr_monitor = pl.callbacks.LearningRateMonitor(logging_interval="step")
         callbacks.append(lr_monitor)
-
+    print(config.trainer)
+    print("fuck")
     trainer: pl.Trainer = hydra_zen.instantiate(config.trainer, callbacks=callbacks, _convert_="all")
 
     if config.load_checkpoint:

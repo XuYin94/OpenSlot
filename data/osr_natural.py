@@ -4,9 +4,208 @@ import torch
 import numpy as np
 from PIL import Image
 from random import sample
+import torchvision
 import json
 from torchvision import transforms
 from torchvision.utils import make_grid
+def Get_cifar_Dataset(dataroot="/root/yinxu/Dataset/",split_idx="1"):
+    train_transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Resize((224, 224), interpolation=torchvision.transforms.InterpolationMode.BICUBIC,
+                          antialias=True),
+        transforms.RandomCrop((224, 224)),
+        transforms.RandomHorizontalFlip(),
+        transforms.Normalize(std=[0.229, 0.224, 0.225],
+                             mean=[0.485, 0.456, 0.406])
+    ])
+    test_transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Resize((224, 224), interpolation=torchvision.transforms.InterpolationMode.BICUBIC,
+                          antialias=True),
+        # transforms.CenterCrop((224, 224)),
+        transforms.Normalize(std=[0.229, 0.224, 0.225],
+                             mean=[0.485, 0.456, 0.406])
+    ])
+
+    train_dataset = Tiny_dataset(prefix='train', data_root=dataroot, split_idx=split_idx,nbr_classes=50,transform=train_transform)
+    known_test_dataset = Tiny_dataset(prefix='known_test', data_root=dataroot, split_idx=split_idx,nbr_classes=50,transform=test_transform)
+    unknown_test_dataset = Tiny_dataset(prefix='unknown_test', data_root=dataroot, split_idx=split_idx,nbr_classes=50,transform=test_transform)
+
+
+    print('Train: ', len(train_dataset), 'Test: ', len(known_test_dataset),
+          "Unknow_test:",len(unknown_test_dataset))
+    all_datasets = {
+        'train': train_dataset,
+        'test_known': known_test_dataset,
+        'test_unknown': unknown_test_dataset
+    }
+
+    return all_datasets
+
+
+def Get_Tiny_Dataset(dataroot="/root/yinxu/Dataset/",split_idx="1"):
+    train_transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Resize((224, 224), interpolation=torchvision.transforms.InterpolationMode.BICUBIC,
+                          antialias=True),
+        transforms.RandomCrop((224, 224)),
+        transforms.RandomHorizontalFlip(),
+        transforms.Normalize(std=[0.229, 0.224, 0.225],
+                             mean=[0.485, 0.456, 0.406])
+    ])
+    test_transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Resize((224, 224), interpolation=torchvision.transforms.InterpolationMode.BICUBIC,
+                          antialias=True),
+        # transforms.CenterCrop((224, 224)),
+        transforms.Normalize(std=[0.229, 0.224, 0.225],
+                             mean=[0.485, 0.456, 0.406])
+    ])
+
+    train_dataset = Cifar_dataset(prefix='train', data_root=dataroot, split_idx=split_idx,nbr_classes=50,transform=train_transform)
+    known_test_dataset =Cifar_dataset(prefix='known_test', data_root=dataroot, split_idx=split_idx,nbr_classes=50,transform=test_transform)
+    unknown_test_dataset = Cifar_dataset(prefix='unknown_test', data_root=dataroot, split_idx=split_idx,nbr_classes=50,transform=test_transform)
+
+
+    print('Train: ', len(train_dataset), 'Test: ', len(known_test_dataset),
+          "Unknow_test:",len(unknown_test_dataset))
+    all_datasets = {
+        'train': train_dataset,
+        'test_known': known_test_dataset,
+        'test_unknown': unknown_test_dataset
+    }
+
+    return all_datasets
+
+class Tiny_dataset(Dataset):
+    def __init__(self, data_root="D:\\datasets\\openood\\data\\image_classic\\",prefix="train",nbr_classes=20,split_idx=1,transform=None):
+        self.root_dir=data_root
+        self.transform=transform
+
+        self.transform=transform
+        self.prefix=prefix
+        self.max_num_object=1
+        #if self.prefix=="train":
+        self.num_known_classes=nbr_classes
+        self.split_idx=split_idx
+        self.name_list=self.__get_name_list()
+    def __get_name_list(self):
+        if self.prefix=="train":
+            text_file=os.path.join("./data/osr_splits/osr_cifar6/"+self.prefix+"/"+self.prefix+"_cifar10_"+str(self.num_known_classes)+"_seed"+str(self.split_idx)+".txt")
+        elif self.prefix=="known_test":
+            text_file = os.path.join("./data/osr_splits/osr_cifar6/test/test_cifar10_" + str(
+                self.num_known_classes) + "_id_seed" + str(self.split_idx) + ".txt")
+        else:
+            text_file = os.path.join("./data/osr_splits/osr_cifar6/test/test_cifar10_" + str(
+                self.num_known_classes) + "_ood_seed" + str(self.split_idx) + ".txt")
+        print(text_file)
+        line_list=open(text_file).readlines()
+        print("Totally have {} samples in {} set.".format(len(line_list),self.prefix))
+        img_path=[]
+        labels=[]
+        for idx,line in enumerate(line_list):
+            name=line.strip().split()[0]
+            img_path.append(name)
+            labels.append(line.strip().split()[1])
+        self.labels=labels
+        return img_path
+
+    def __len__(self):
+        return len(self.name_list)
+
+    def __getitem__(self, index):
+        name=self.name_list[index]
+        sample={}
+        img_path=os.path.join(self.root_dir,name)
+        image=Image.open(img_path).convert("RGB")
+        #print(np.asarray(image).shape)
+        image=self.transform(image)
+        label=int(self.labels[index])
+        label=torch.as_tensor(label,dtype=torch.long)
+        sample['img']=image
+        sample['label']=label
+
+        if self.prefix in ["train"]:
+            class_label=torch.zeros((self.max_num_object))
+            selected_slots=torch.zeros((self.max_num_object))
+            class_label[0]=label
+            selected_slots[0]=1
+            class_label=torch.as_tensor(class_label,dtype=torch.int64)
+
+            class_label=torch.nn.functional.one_hot(class_label,num_classes=self.num_known_classes)
+            sample['class_label']=class_label
+
+            sample['fg_channel']=selected_slots.unsqueeze(1)
+
+
+        return sample
+
+
+
+class Cifar_dataset(Dataset):
+    def __init__(self, data_root="D:\\datasets\\openood\\data\\image_classic\\",prefix="train",nbr_classes=20,split_idx=1,transform=None):
+        self.root_dir=data_root
+        self.transform=transform
+
+        self.transform=transform
+        self.prefix=prefix
+        self.max_num_object=1
+        #if self.prefix=="train":
+        self.num_known_classes=nbr_classes
+        self.split_idx=split_idx
+        self.name_list=self.__get_name_list()
+    def __get_name_list(self):
+        if self.prefix=="train":
+            text_file=os.path.join("./data/osr_splits/osr_cifar50/"+self.prefix+"/"+self.prefix+"_cifar100_"+str(self.num_known_classes)+"_seed"+str(self.split_idx)+".txt")
+        elif self.prefix=="known_test":
+            text_file = os.path.join("./data/osr_splits/osr_cifar50/test/test_cifar100_" + str(
+                self.num_known_classes) + "_id_seed" + str(self.split_idx) + ".txt")
+        else:
+            text_file = os.path.join("./data/osr_splits/osr_cifar50/test/test_cifar100_" + str(
+                self.num_known_classes) + "_ood_seed" + str(self.split_idx) + ".txt")
+        print(text_file)
+        line_list=open(text_file).readlines()
+        print("Totally have {} samples in {} set.".format(len(line_list),self.prefix))
+        img_path=[]
+        labels=[]
+        for idx,line in enumerate(line_list):
+            name=line.strip().split()[0]
+            img_path.append(name)
+            labels.append(line.strip().split()[1])
+        self.labels=labels
+        return img_path
+
+    def __len__(self):
+        return len(self.name_list)
+
+    def __getitem__(self, index):
+        name=self.name_list[index]
+        sample={}
+        img_path=os.path.join(self.root_dir,name)
+        image=Image.open(img_path).convert("RGB")
+        #print(np.asarray(image).shape)
+        image=self.transform(image)
+        label=int(self.labels[index])
+        label=torch.as_tensor(label,dtype=torch.long)
+        sample['img']=image
+        sample['label']=label
+
+        if self.prefix in ["train"]:
+            class_label=torch.zeros((self.max_num_object))
+            selected_slots=torch.zeros((self.max_num_object))
+            class_label[0]=label
+            selected_slots[0]=1
+            class_label=torch.as_tensor(class_label,dtype=torch.int64)
+
+            class_label=torch.nn.functional.one_hot(class_label,num_classes=self.num_known_classes)
+            sample['class_label']=class_label
+
+            sample['fg_channel']=selected_slots.unsqueeze(1)
+
+
+        return sample
+
+
 
 class NpEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -248,18 +447,18 @@ class OSR_dataset(Dataset):
             self.num_slot=7
 
     def __get_name_list(self):
-        text_file=os.path.join("./data/osr_splits/"+self.exp+"/single/"+self.exp+"_"+self.prefix+"_split.txt")
+        text_file=os.path.join("./data/osr_splits/"+self.exp+"/single/"+self.exp+"_"+self.prefix+".txt")
         line_list=open(text_file).readlines()
         print("Totally have {} samples in {} set.".format(len(line_list),self.prefix))
         img_path=[]
         labels=[]
-        if self.exp=='voc':
-            aug_str='_'
-        else:
-            aug_str=''
+        # if self.exp=='voc':
+        #     aug_str='_'
+        # else:
+        #     aug_str=''
         for idx,line in enumerate(line_list):
             name=line.split()[0]
-            img_path.append(name[:15]+aug_str+name[15:])
+            img_path.append(name)
             labels.append(line.split()[1])
         self.labels=labels
         return img_path
@@ -280,7 +479,7 @@ class OSR_dataset(Dataset):
         sample['img']=image
         sample['label']=label
 
-        if self.prefix in ["train","val"]:
+        if self.prefix in ["train"]:
             class_label=torch.zeros((self.max_num_object))
             selected_slots=torch.zeros((self.max_num_object))
             class_label[0]=label
@@ -290,14 +489,15 @@ class OSR_dataset(Dataset):
             class_label=torch.nn.functional.one_hot(class_label,num_classes=self.num_known_classes)
             sample['class_label']=class_label
             sample['fg_channel']=selected_slots.unsqueeze(1)
-            # bg_class_label=torch.zeros((self.num_slot))
-            # bg_class_label[1:]=1
-            # sample['bg_channel']=bg_class_label.unsqueeze(1)
-            #
-            # #bg_class_label=torch.nn.functional.one_hot(torch.as_tensor(bg_class_label,dtype=torch.int64),num_classes=2)
-            # bg_class_label = torch.as_tensor(bg_class_label, dtype=torch.float64).unsqueeze(1)
-            #
-            # sample['bg_class_label']=bg_class_label
+
+           #bg_class_label=torch.zeros((self.num_slot))
+            #bg_class_label[1:]=1
+            #sample['bg_channel']=bg_class_label.unsqueeze(1)
+
+            #bg_class_label=torch.nn.functional.one_hot(torch.as_tensor(bg_class_label,dtype=torch.int64),num_classes=2)
+            #bg_class_label = torch.as_tensor(bg_class_label, dtype=torch.float64).unsqueeze(1)
+
+            #sample['bg_class_label']=bg_class_label
         return sample
 
 
@@ -305,22 +505,130 @@ def Get_OSR_Datasets(train_transform, test_transform,dataroot="D:\\datasets\\VOC
 
     train_dataset = OSR_dataset(prefix='train',data_root=dataroot,exp=exp,transform=train_transform)
     val_dataset = OSR_dataset(prefix='val',data_root=dataroot,exp=exp,transform=test_transform)
-    single_test_dataset = OSR_dataset(prefix='single_test',data_root=dataroot,exp=exp,transform=test_transform)
-    easy_mixture_test_dataset = OSR_dataset(prefix='easy_mixture_test',data_root=dataroot,exp=exp,transform=test_transform)
-    hard_mixture_test_dataset = OSR_dataset(prefix='hard_mixture_test',data_root=dataroot,exp=exp,transform=test_transform)
-    print('Train: ', len(train_dataset), 'Val: ', len(val_dataset), 'Single_test: ', len(single_test_dataset),
-          'Easy_mixture_test:', len(easy_mixture_test_dataset),
-    'Hard_mixture_test:', len(hard_mixture_test_dataset))
 
+
+    single_unknown_dataset = OSR_dataset(prefix='no_mixture_test',data_root=dataroot,exp=exp,transform=test_transform)
+    all_mixture_unknown_dataset = OSR_dataset(prefix='all_mixture_test',data_root=dataroot,exp=exp,transform=test_transform)
+
+    openness_easy_mixture_unknown_dataset = OSR_dataset(prefix='openness_easy_test',data_root=dataroot,exp=exp,transform=test_transform)
+    openness_hard_mixture_unknown_dataset = OSR_dataset(prefix='openness_hard_test',data_root=dataroot,exp=exp,transform=test_transform)
+
+    dominance_easy_mixture_unknown_dataset = OSR_dataset(prefix='dominance_easy_test',data_root=dataroot,exp=exp,transform=test_transform)
+    dominance_hard_mixture_unknown_dataset = OSR_dataset(prefix='dominance_hard_test',data_root=dataroot,exp=exp,transform=test_transform)
+
+
+    print('Train: ', len(train_dataset), 'Test: ', len(val_dataset), 'Single_Out: ',
+          len(single_unknown_dataset),'All_mixture: ',
+          len(all_mixture_unknown_dataset),'Openness_easy_mixture:', len(openness_easy_mixture_unknown_dataset),'Openness_hard_mixture:', len(openness_hard_mixture_unknown_dataset),'Dominance_easy_mixture:', len(dominance_easy_mixture_unknown_dataset),'Dominance_hard_mixture:', len(dominance_hard_mixture_unknown_dataset))
     all_datasets = {
         'train': train_dataset,
         'val': val_dataset,
-        'single_test': single_test_dataset,
-        'easy_mixture_test': easy_mixture_test_dataset,
-        'hard_mixture_test': hard_mixture_test_dataset
+        'No_mixture': single_unknown_dataset,
+        'all_mixture': all_mixture_unknown_dataset,
+        'openness_easy_mixture_test':openness_easy_mixture_unknown_dataset,
+        'openness_hard_mixture_test': openness_hard_mixture_unknown_dataset,
+        'dominance_easy_mixture_test':dominance_easy_mixture_unknown_dataset,
+        'dominance_hard_mixture_test': dominance_hard_mixture_unknown_dataset
     }
 
     return all_datasets
+
+class voc_detection(Dataset):
+    def __init__(self, data_root="D:\\datasets\\VOC\\VOCdevkit\\",prefix='train',exp="voc_detection", transform=None):
+        self.root_dir=data_root
+        self.transform=transform
+        self.prefix=prefix
+        self.exp=exp
+        self.exp_info='./data/osr_splits/'+str(exp)+'/'+prefix+''
+        self.img_list=open(r'' + self.exp_info + '_set.txt').readlines()
+        self.cls_labels_dict = np.load(self.exp_info+"_label.npy")
+        
+        self.num_known_classes=20
+        self.transform=transform
+        self.max_num_object = 7
+
+    def __len__(self):
+        return len(self.img_list)
+
+    def __getitem__(self, index):
+        name=self.img_list[index].strip()
+        #print(name)
+        sample={}
+        img_path=os.path.join(self.root_dir,name)
+
+        image=Image.open(img_path).convert("RGB")
+        image=self.transform(image)
+        sample['img']=image
+        if self.prefix in ["train","val"]:
+
+            sample['label'] = self.cls_labels_dict[index]
+            label=self.cls_labels_dict[index].nonzero()[0][:self.max_num_object]
+            nbr_clss=self.max_num_object if len(label)>self.max_num_object else len(label)
+            selected_slots = torch.zeros((self.max_num_object))
+            semantic_label = torch.zeros((self.max_num_object))
+            selected_slots[:nbr_clss] = 1
+            semantic_label[:nbr_clss] = torch.as_tensor(np.array(label),dtype=torch.long)+1
+
+            sample['fg_channel']=selected_slots.unsqueeze(1)
+            semantic_label=torch.as_tensor(semantic_label,dtype=torch.int64)
+            semantic_label=torch.nn.functional.one_hot(semantic_label,num_classes=self.num_known_classes+1)[:,1:]
+            sample['class_label']=semantic_label
+        else:
+            sample['label']=torch.tensor(float(np.inf))
+        return sample
+class intra_coco_multi_label(Dataset):
+    def __init__(self, data_root="D:\\datasets\\VOC\\VOCdevkit\\",prefix='train',exp="voc", transform=None):
+        self.root_dir=data_root
+        self.transform=transform
+        self.prefix=prefix
+        self.exp=exp
+        self.exp_info='./data/osr_splits/multi_osr/Intra_coco/'+str(exp)+'/'+prefix+''
+        self.img_list=open(r'' + self.exp_info + '_set.txt').readlines()
+        if prefix in ["train"]:
+            self.cls_labels_dict = np.load(self.exp_info+"_label.npy")
+        
+        
+        self.transform=transform
+        self.max_num_object = 7
+        if exp=="Task1":
+            self.num_known_classes=20
+        elif exp=="Task2":
+            self.num_known_classes=40
+        else:
+            self.num_known_classes=60
+
+    def __len__(self):
+        return len(self.img_list)
+
+    def __getitem__(self, index):
+        name=self.img_list[index].strip()
+        if self.prefix=="no_mixture":
+            name=name[:-2]
+
+        #print(name)
+        sample={}
+        img_path=os.path.join(self.root_dir,name)
+
+        image=Image.open(img_path).convert("RGB")
+        image=self.transform(image)
+        sample['img']=image
+        if self.prefix in ["train"]:
+
+            sample['label'] = self.cls_labels_dict[index]
+            label=self.cls_labels_dict[index].nonzero()[0][:self.max_num_object]
+            nbr_clss=self.max_num_object if len(label)>self.max_num_object else len(label)
+            selected_slots = torch.zeros((self.max_num_object))
+            semantic_label = torch.zeros((self.max_num_object))
+            selected_slots[:nbr_clss] = 1
+            semantic_label[:nbr_clss] = torch.as_tensor(np.array(label),dtype=torch.long)+1
+
+            sample['fg_channel']=selected_slots.unsqueeze(1)
+            semantic_label=torch.as_tensor(semantic_label,dtype=torch.int64)
+            semantic_label=torch.nn.functional.one_hot(semantic_label,num_classes=self.num_known_classes+1)[:,1:]
+            sample['class_label']=semantic_label
+        else:
+            sample['label']=torch.tensor(float(np.inf))
+        return sample
 
 
 class Multi_label_OSR_dataset(Dataset):
@@ -330,7 +638,8 @@ class Multi_label_OSR_dataset(Dataset):
         self.prefix=prefix
         self.exp=exp
         if exp=="multi_osr":
-            self.exp_info='./data/osr_splits/'+exp+'/voc2coco17_'+prefix+''
+            self.exp_info='./data/osr_splits/'+exp+'/voc2coco2014/voc2coco14_osr_'+prefix+''
+            print(self.exp_info)
         else:
             self.exp_info='./data/osr_splits/'+exp+'/multi/'+exp+'_multi_'+prefix+''
 
@@ -343,17 +652,16 @@ class Multi_label_OSR_dataset(Dataset):
         if exp=="voc":
             self.max_num_object = 6
             self.num_known_classes=20
-            self.path_preset="JPEGImages"
-        elif exp=="coco":
+        else:
             self.max_num_object = 7
             self.num_known_classes=80
-            self.path_preset=self.exp
 
     def __len__(self):
         return len(self.img_list)
 
     def __getitem__(self, index):
         name=self.img_list[index].strip()
+        #print(name)
         sample={}
         img_path=os.path.join(self.root_dir,name)
 
@@ -375,18 +683,29 @@ class Multi_label_OSR_dataset(Dataset):
             semantic_label=torch.as_tensor(semantic_label,dtype=torch.int64)
             semantic_label=torch.nn.functional.one_hot(semantic_label,num_classes=self.num_known_classes+1)[:,1:]
             sample['class_label']=semantic_label
+            # print(semantic_label)
+            # print(sample["label"])
+            # print(sample["fg_channel"])
+            #bg_class_label=torch.zeros((self.max_num_object))
+            #if nbr_clss<self.max_num_object:
+                #nbr_bg_slot=self.max_num_object-nbr_clss
+                #bg_class_label[:nbr_bg_slot]=1
+            #else:
+            #bg_class_label[:3]=1
+            #sample['bg_channel']=bg_class_label.unsqueeze(1)
+            #bg_class_label = torch.as_tensor(bg_class_label, dtype=torch.float64).unsqueeze(1)
 
-
+            #sample['bg_class_label']=bg_class_label
         else:
             sample['label']=torch.tensor(float(np.inf))
         return sample
 
 
-
 voc2coco_map=[4,1,15,8,43,5,2,16,61,20,66,17,18,3,0,63,19,62,6,71]
+
 def get_non_overlap_coco_img():
-    coco_label_dict=np.concatenate((np.load("./osr_splits/coco/multi/coco17_multi_train_label.npy"),
-                                       np.load("./osr_splits/coco/multi/coco17_multi_val_label.npy")),0)
+    coco_label_dict=np.concatenate((np.load("./osr_splits/coco/multi/coco_multi_train_label.npy"),
+                                       np.load("./osr_splits/coco/multi/coco_multi_val_label.npy")),0)
     non_overplapped_cls=list(set(range(80)).difference(set(voc2coco_map)))
     img_list=open(r'./osr_splits/coco/multi/coco17_multi_train.txt').readlines()+open(r'./osr_splits/coco/multi/coco17_multi_val.txt').readlines()
 

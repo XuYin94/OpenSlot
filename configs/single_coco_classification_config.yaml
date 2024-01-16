@@ -1,5 +1,5 @@
 trainer:
-  exp_name: single
+  exp_name: single_coco
   max_steps: 20000
   log_every_n_epoch: 5
   save_every_n_epoch: 1
@@ -57,7 +57,7 @@ models:
     _target_: ocl.decoding.OSR_classifier
     input_dim: ${models.conditioning.object_dim}
     activation_fn: leaky_relu
-    nbr_clses: 2
+    nbr_clses: 1
     initial_layer_norm: true
 
   object_decoder:
@@ -96,7 +96,7 @@ visualizations:
 experiment:
   input_feature_dim: 768
 
-Discovery_weights: ./checkpoints/Dis_partial_coco.ckpt
+Discovery_weights: ./checkpoints/discovery/Dis_partial_coco.ckpt
 
 
 optimizers:

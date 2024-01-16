@@ -1,8 +1,8 @@
 trainer:
   exp_name: multi_voc
-  max_steps: 20000
+  max_epoch: 250
   log_every_n_epoch: 5
-  save_every_n_epoch: 1
+  save_every_n_epoch: 10
   log_root_path: ./log
   softmax_eval: false
 
@@ -53,6 +53,15 @@ models:
     nbr_clses: 20
     initial_layer_norm: true
 
+  attention_threshold: 0.5
+  noise_threshold: 0.75
+  
+  aux_classifier:
+    _target_: ocl.decoding.OSR_classifier
+    input_dim: ${models.conditioning.object_dim}
+    activation_fn: leaky_relu
+    nbr_clses: 1
+    initial_layer_norm: true
 
   object_decoder:
     _target_: ocl.decoding.AutoregressivePatchDecoder
@@ -90,17 +99,13 @@ visualizations:
 experiment:
   input_feature_dim: 768
 
-Discovery_weights: ./checkpoints/Dis_cls_voc.ckpt
+Discovery_weights: /root/yinxu/open_set/test/Openslot/checkpoints/discovery/Dis_full_voc.ckpt
+
+Checkpoint_weight: ./log/multi_voc/multi_voc_osr_final.pth
+
 
 
 optimizers:
-  _target_: ocl.optimization.OptimizationWrapper
-  optimizer:
-    _target_: torch.optim.Adam
-    _partial_: true
-    lr: 0.01
-  lr_scheduler:
-    _target_: torch.optim.lr_scheduler.StepLR
-    _partial_: true
-    gamma: 0.5
-    step_size: 2000
+  lr_rate: 0.005
+  decay_epoch: 50
+

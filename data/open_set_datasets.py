@@ -4,7 +4,7 @@ from data.svhn import get_svhn_datasets
 from data.mnist import get_mnist_datasets
 from data.osr_splits.osr_splits import osr_splits
 from data.augmentations import get_transform
-from data.osr_natural import  Get_OSR_Datasets,Multi_label_OSR_dataset
+from data.osr_natural import  Get_OSR_Datasets,Multi_label_OSR_dataset,intra_coco_multi_label,voc_detection
 import torchvision
 from torch.utils.data import DataLoader
 import argparse
@@ -42,65 +42,125 @@ class ImageNet22k(torchvision.datasets.ImageFolder):
 
 
         return {'img':img}
+    
+def get_intra_coco_datasets(task_name,root_path="/root/yinxu/Dataset/coco/2014/"):
+    img_transform,test_transform=get_transform(exp_name="voc")
+    train_set = intra_coco_multi_label(data_root=root_path, prefix='train', exp=task_name,
+                                        transform=img_transform)
+    val_set = intra_coco_multi_label(data_root=root_path, prefix='in_test', exp=task_name,
+                                        transform=test_transform)
+    no_mixture_set=intra_coco_multi_label(data_root=root_path, prefix='no_mixture', exp=task_name,
+                                        transform=test_transform)
+
+    all_mixture_set=intra_coco_multi_label(data_root=root_path, prefix='all_mixture', exp=task_name,
+                                        transform=test_transform)
+
+    openness_easy_set=intra_coco_multi_label(data_root=root_path, prefix='openness_easy_test', exp=task_name,
+                                        transform=test_transform)
+
+    openness_hard_set=intra_coco_multi_label(data_root=root_path, prefix='openness_hard_test', exp=task_name,
+                                        transform=test_transform)
+
+    dominance_easy_set=intra_coco_multi_label(data_root=root_path, prefix='dominance_easy_test', exp=task_name,
+                                        transform=test_transform)
+
+    dominance_hard_set=intra_coco_multi_label(data_root=root_path, prefix='dominance_hard_test', exp=task_name,
+                                        transform=test_transform)
+    print('Train: ', len(train_set), 'Test: ', len(val_set), 'Single_Out: ',
+            len(no_mixture_set), 'All_mixture: ',
+            len(all_mixture_set), 'Openness_easy_mixture:', len(openness_easy_set),
+            'Openness_hard_mixture:', len(openness_hard_set), 'Dominance_easy_mixture:',
+            len(dominance_easy_set), 'Dominance_hard_mixture:',
+            len(dominance_hard_set))
+    all_datasets = {
+        'train': train_set,
+        'val': val_set,
+        'single_test': no_mixture_set,
+        'All_mixture': all_mixture_set,
+        'openness_easy_mixture_test': openness_easy_set,
+        'openness_hard_mixture_test': openness_hard_set,
+        'dominance_easy_mixture_test': dominance_easy_set,
+        'dominance_hard_mixture_test': dominance_hard_set
+    }
+
+    return all_datasets
+
+def get_voc_detection_datasets():
+    root_path="/root/yinxu/Dataset/VOC/VOCdevkit/"
+    img_transform,test_transform=get_transform(exp_name="voc")
+    train_set=voc_detection(data_root=root_path,prefix="train",transform=img_transform)
+    val_set=voc_detection(data_root=root_path,prefix="val",transform=test_transform)
+    all_datasets = {
+            'train': train_set,
+            'val': val_set
+        }
+    print('Train: ', len(train_set), 'Test: ', len(val_set))
+    return all_datasets
 
 def get_multi_ood_datasets(name,ood="imagenet22k"):
     root_paths = {
-        "coco": "D:\\datasets\\coco\\2017\\",
-        "voc": "D:\\datasets\\VOC\\VOCdevkit\\VOC2012\\",
-        "voc_test": "D:\\datasets\\VOC\\VOCdevkit\\test\\VOCdevkit\\VOC2012\\",
-        "imagenet22k": "D:\datasets\ImageNet-22K"
+            "coco": "/root/yinxu/Dataset/coco/2014/",
+            "voc": "/root/yinxu/Dataset/VOC/VOCdevkit/VOC2012/",
+        "voc_test": "/root/yinxu/Dataset/VOC/VOCdevkit/test/VOCdevkit/VOC2012/",
+        "imagenet22k": "/root/yinxu/Dataset/ImageNet-22K/"
     }
-    # normalize = torchvision.transforms.Normalize(mean=[0.485, 0.456, 0.406],
-    #                                  std=[0.229, 0.224, 0.225])
-    # img_transform = torchvision.transforms.Compose([
-    #         torchvision.transforms.RandomHorizontalFlip(),
-    #         torchvision.transforms.RandomResizedCrop((224, 224), scale=(0.5, 2.0)),
-    #         torchvision.transforms.ToTensor(),
-    #         normalize,
-    #     ])
-
     img_transform,test_transform=get_transform(exp_name="voc")
-    # test_transform = torchvision.transforms.Compose([
-    #     torchvision.transforms.Resize((224, 224)),
-    #     torchvision.transforms.ToTensor(),
-    #     normalize
-    # ])
+
     if name=="multi_osr":
         train_set = Multi_label_OSR_dataset(data_root=root_paths["voc"], prefix='train', exp="voc",
                                             transform=img_transform)
         val_set = Multi_label_OSR_dataset(data_root=root_paths['voc_test'], prefix='test', exp="voc",
-                                          transform=img_transform)
-        easy_set=Multi_label_OSR_dataset(data_root=root_paths['coco'], prefix='easy', exp=name,
-                                          transform=img_transform)
-        # midium_set=Multi_label_OSR_dataset(data_root=root_paths['coco'], prefix='midium', exp=name,
-        #                                   transform=img_transform)
+                                          transform=test_transform)
         no_mixture_set=Multi_label_OSR_dataset(data_root=root_paths['coco'], prefix='no_mixture', exp=name,
-                                          transform=img_transform)
-        hard_set=Multi_label_OSR_dataset(data_root=root_paths['coco'], prefix='hard', exp=name,
-                                          transform=img_transform)
-        dataset={"train":train_set,
-                 "val": val_set,
-                 "no_mixture_test": no_mixture_set,
-                 "easy":easy_set,
-                 #"midium":midium_set,
-                 "hard":hard_set}
+                                          transform=test_transform)
+        all_mixture_set=Multi_label_OSR_dataset(data_root=root_paths['coco'], prefix='all_mixture', exp=name,
+                                          transform=test_transform)
+        openness_easy_set=Multi_label_OSR_dataset(data_root=root_paths['coco'], prefix='openness_easy', exp=name,
+                                          transform=test_transform)
+
+        openness_hard_set=Multi_label_OSR_dataset(data_root=root_paths['coco'], prefix='openness_hard', exp=name,
+                                          transform=test_transform)
+
+        dominance_easy_set=Multi_label_OSR_dataset(data_root=root_paths['coco'], prefix='dominance_easy', exp=name,
+                                          transform=test_transform)
+
+        dominance_hard_set=Multi_label_OSR_dataset(data_root=root_paths['coco'], prefix='dominance_hard', exp=name,
+                                          transform=test_transform)
+        print('Train: ', len(train_set), 'Test: ', len(val_set), 'Single_Out: ',
+              len(no_mixture_set), 'all_mixture: ', len(all_mixture_set), 'Openness_easy_mixture:', len(openness_easy_set),
+              'Openness_hard_mixture:', len(openness_hard_set), 'Dominance_easy_mixture:',
+              len(dominance_easy_set), 'Dominance_hard_mixture:',
+              len(dominance_hard_set))
+        all_datasets = {
+            'train': train_set,
+            'val': val_set,
+            'single_test': no_mixture_set,
+            'all_mixture': all_mixture_set,
+            'openness_easy_mixture_test': openness_easy_set,
+            'openness_hard_mixture_test': openness_hard_set,
+            'dominance_easy_mixture_test': dominance_easy_set,
+            'dominance_hard_mixture_test': dominance_hard_set
+        }
+
 
     else:
 
         if name=="voc":
             train_set=Multi_label_OSR_dataset(data_root=root_paths[name],prefix='train',exp=name, transform=img_transform)
-            #val_set=Multi_label_OSR_dataset(data_root=root_paths,prefix='val',exp=name, transform=img_transform)
             val_set=Multi_label_OSR_dataset(data_root=root_paths['voc_test'],prefix='test',exp=name, transform=img_transform)
+            #val_set=Multi_label_OSR_dataset(data_root=root_paths['voc_test'],prefix='test',exp=name, transform=img_transform)
             test_set = ImageNet22k(root_paths[ood], transform=test_transform)
         elif name=="coco":
             train_set=Multi_label_OSR_dataset(data_root=root_paths[name],prefix='train',exp=name, transform=img_transform)
-            val_set=Multi_label_OSR_dataset(data_root=root_paths[name],prefix='test',exp=name, transform=img_transform)
+            val_set=Multi_label_OSR_dataset(data_root=root_paths[name],prefix='val',exp=name, transform=img_transform)
             test_set = ImageNet22k(root_paths[ood], transform=test_transform)
 
-        dataset={"train":train_set,
+        print('Train: ', len(train_set), 'Val: ', len(val_set), 'Single_Out: ', len(test_set))
+
+        all_datasets={"train":train_set,
                  "val": val_set,
                  "test": test_set}
-    return dataset
+    return all_datasets
 
 
 
@@ -128,15 +188,12 @@ def get_datasets(name, transform='default', image_size=224, train_classes=(0, 1,
                                   seed=seed)
     elif name in ["coco", "voc", "nus"]:
         root_paths = {
-            "coco": "D:\\datasets\\coco\\2014\\",
-            "voc": "D:\\datasets\\VOC\\VOCdevkit\\VOC2012\\",
-            "nus": "D:\\datasets\\nus_wide\\"
+            "coco": "/root/yinxu/Dataset/coco/2014/",
+            "voc": "/root/yinxu/Dataset/VOC/VOCdevkit/VOC2012/"
         }
         root_dir = root_paths[name]
         datasets = Get_OSR_Datasets(train_transform, test_transform, dataroot=root_dir, exp=name)
 
-        #datasets["mean"]= [0.485, 0.456, 0.406]
-        #datasets["std"] = [0.229, 0.224, 0.225]
     else:
         raise NotImplementedError
 

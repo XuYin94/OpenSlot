@@ -5,24 +5,24 @@ import ocl
 import torch
 import torch.nn as nn
 import numpy as np
+from torch.autograd import Variable
 from scipy.optimize import linear_sum_assignment
 import torch.nn.functional as F
 from ocl.utils.trees import walk_tree_with_paths
 from ocl.visualization_types import Visualization
 
-def log_visualizations(visualzer,logger_experiment,outputs,images,global_step, phase="train"):
 
+def log_visualizations(visualzer, logger_experiment, outputs, images, global_step, phase="train"):
     visualizations = {}
     for name, vis in visualzer.items():
-        if isinstance(vis,ocl.visualizations.Image):
+        if isinstance(vis, ocl.visualizations.Image):
             visualizations[name] = vis(images)
-        elif isinstance(vis,ocl.visualizations.Mask):
+        elif isinstance(vis, ocl.visualizations.Mask):
             visualizations[name] = vis(mask=outputs.masks_as_image)
-        elif isinstance(vis,ocl.visualizations.Segmentation):
-            visualizations[name] = vis(image=images,mask=outputs.masks_as_image)
+        elif isinstance(vis, ocl.visualizations.Segmentation):
+            visualizations[name] = vis(image=images, mask=outputs.masks_as_image)
         else:
             NotImplementedError
-
 
     visualization_iterator = walk_tree_with_paths(
         visualizations, path=None, instance_check=lambda t: isinstance(t, Visualization)
@@ -39,12 +39,14 @@ def log_visualizations(visualzer,logger_experiment,outputs,images,global_step, p
             # The logger does not support the right data format.
             pass
 
+
 def get_available_devices():
     sys_gpu = torch.cuda.device_count()
 
     device = torch.device('cuda:0' if sys_gpu > 0 else 'cpu')
     available_gpus = list(range(sys_gpu))
     return device, available_gpus
+
 
 def _no_grad_trunc_normal_(tensor, mean, std, a, b):
     # Cut & paste from PyTorch official master until it's in a few official releases - RW
@@ -81,9 +83,11 @@ def _no_grad_trunc_normal_(tensor, mean, std, a, b):
         tensor.clamp_(min=a, max=b)
         return tensor
 
+
 def trunc_normal_(tensor, mean=0., std=1., a=-2., b=2.):
     # type: (Tensor, float, float, float, float) -> Tensor
     return _no_grad_trunc_normal_(tensor, mean, std, a, b)
+
 
 def initialize_weights(*models):
     for model in models:
@@ -115,79 +119,349 @@ def apply_leaf(m, f):
 def set_trainable(l, b):
     apply_leaf(l, lambda m: set_trainable_attr(m, b))
 
-def get_highest_slot(slots,using_softmax=False):
-    b,num_slots,num_classes=slots.shape
+
+# def get_highest_slot(slots,valid_slots,using_softmax=False):
+#     batch,num_slots,num_classes=slots.shape
+#     for idx in range(batch):
+#         correct_slots_list=[]
+#         if valid_slots[idx].sum()>0:
+#             semantic_slots=slots[idx,valid_slots[idx]]
+#         else:
+#             semantic_slots=slots[idx]
+#         if using_softmax:
+#             semantic_slots=torch.softmax(semantic_slots,dim=-1)  ## [b,num_slots,num_classes]
+#         #print(semantic_slots.shape)
+#         __, pred = torch.max(semantic_slots.flatten(0,1), dim=-1)
+#         indices=pred// num_classes
+#         correct_slots_list.append(semantic_slots[indices])
+#     return torch.stack(correct_slots_list,dim=0) ## [b,num_classes]
+def get_highest_slot(slots, using_softmax=False):
+    b, num_slots, num_classes = slots.shape
     if using_softmax:
-        slots=torch.softmax(slots,dim=-1)  ## [b,num_slots,num_classes]
+        slots = torch.softmax(slots, dim=-1)  ## [b,num_slots,num_classes]
     __, pred = torch.max(slots.flatten(1, 2), dim=-1)
-    indices=pred// num_classes
-    correct_slots_list=[]
+    indices = pred // num_classes
+    correct_slots_list = []
     for idx in range(slots.shape[0]):
-        correct_slots_list.append(slots[idx,indices[idx]])
-    return torch.stack(correct_slots_list,dim=0) ## [b,num_classes]
+        correct_slots_list.append(slots[idx, indices[idx]])
+    return torch.stack(correct_slots_list, dim=0)  ## [b,num_classes]
 
 
-
-def slot_score(slots,threshold=0.95,exp_type="single"):
-    slot_logits=slots.detach().cpu()
-    softmax_slot=torch.softmax(slot_logits,dim=-1)
-    slot_maximum,indices=torch.max(softmax_slot,dim=-1)
-    slot_logits=slot_logits*((slot_maximum>threshold).unsqueeze(-1)) ## filter out task-irrelevant slots
-    __, pred = torch.max(slot_logits.flatten(1, 2), dim=-1)
-    indices=pred// slots.shape[-1]
-    correct_slots_list=[]
-    for idx in range(slots.shape[0]):
-        correct_slots_list.append(slots[idx,indices[idx]])
-    return torch.stack(correct_slots_list,dim=0) ## [b,num_classes]
-
-
-def slot_min(logits ):
-    logit=logits['fg_logits']
+def slot_min(logits):
+    logit = logits['fg_logits']
     softmax_slot = torch.softmax(logit, dim=-1)
     soft_maximum, __ = torch.max(softmax_slot, dim=-1)
     logit_maximum, __ = torch.max(logit, dim=-1)
     output, __ = torch.min(torch.where(soft_maximum > 0.85, logit_maximum, torch.inf), dim=-1)
     output[output == torch.inf] = -99999
+    return output.cpu().numpy()
+
+
+def slot_jointenergy(logits, fg_temperature, threshold, exp_type="single", exclude_noise=True,
+                     method="sum"):
+    fg_logits = logits['fg_logits']
+
+    if exclude_noise:
+        aux_pred = logits['bg_logits'][:, :, 0]
+        valid_slots=logits['valid_slots']
+        valid_fg_slots=exclude_noisy_slots(aux_pred,valid_slots,threshold)
+        output = torch.zeros(fg_logits.shape[0])
+        for i in range(output.shape[0]):
+            if valid_slots[i].sum() > 0:
+                determined_slot = fg_logits[i, valid_fg_slots[i]]
+            else:
+                determined_slot, __ = torch.max(fg_logits[i], dim=-1)
+                determined_slot = determined_slot.unsqueeze(0)
+                determined_slot = determined_slot.type(torch.float64)
+            assert not torch.isnan(torch.exp(determined_slot)).any()
+            assert not torch.isinf(torch.exp(determined_slot)).any()
+            energy = torch.log(1 + torch.exp(determined_slot))
+            energy = torch.sum(energy, dim=-1)
+            if method == "sum":
+                output[i] = torch.sum(energy, dim=0)
+            if method == "max":
+                output[i], __ = torch.max(energy, dim=0)
+            if method == "min":
+                output[i], __ = torch.min(energy, dim=0)
+    else:
+        fg_logits = fg_logits.type(torch.float64)
+        assert not torch.isnan(torch.exp(fg_logits)).any()
+        assert not torch.isinf(torch.exp(fg_logits)).any()
+        energy = torch.log(1 + torch.exp(fg_logits))
+        energy = torch.sum(energy, dim=-1)
+        if method == "sum":
+            output = torch.sum(energy, dim=-1)
+        if method == "max":
+            output, __ = torch.max(energy, dim=-1)
+        if method == "min":
+            output, __ = torch.min(energy, dim=-1)
 
     return output.cpu().numpy()
 
-def slot_energy(logits,exp_type="single"):
+
+def slot_msp(logits, fg_temperature, threshold, exclud_bg_slots=False, method="sum"):
+    fg_logits = logits['fg_logits']
+    fg_logits = F.softmax(fg_logits, dim=-1)
+    if exclud_bg_slots:
+        # print(threshold)
+        aux_pred = logits['bg_logits'][:, :, 0]
+        bg_maxmum = torch.max(aux_pred, dim=1, keepdim=True)[0]
+        bg_minimum = torch.max(aux_pred, dim=1, keepdim=True)[0]
+        bg_pred = (aux_pred - bg_minimum) / (bg_maxmum - bg_minimum + 1e-10)  ## min-max normalization
+        valid_fg_slots = (bg_pred < threshold).bool()
+        output = torch.zeros(fg_logits.shape[0])
+        for i in range(output.shape[0]):
+            determined_slot = fg_logits[i, valid_fg_slots[i]]
+        else:
+            determined_slot, __ = torch.max(fg_logits[i], dim=-1)
+            determined_slot = determined_slot.unsqueeze(0)
+        output[i], __ = torch.max(determined_slot.flatten(1, 2), dim=-1)
+
+    else:
+        output, __ = torch.max(fg_logits.flatten(1, 2), dim=-1)
+    return output.cpu().numpy()
+
+
+def slot_entropy(logits, temperature, bg_threshold, exp_type="single"):
     logits = logits['fg_logits']
-    if exp_type=="single":
-        #logits=get_highest_slot(logits)
-        output=torch.logsumexp(logits.flatten(1,2), dim=1)
-    else:
-        logits=logits.type(torch.float64)
-        energy=torch.log(1+torch.exp(logits))
-        output=torch.sum(energy.flatten(1,2),dim=-1)
+    entropy = torch.sum((F.softmax(logits, dim=1) * F.log_softmax(logits, dim=1)).flatten(1, 2), dim=1)
 
+    return entropy.cpu().numpy()
+
+
+def slot_energy(logits, fg_temperature, threshold, exclude_noise=True, method="sum"):
+    fg_logits = logits['fg_logits']
+
+    if exclude_noise:
+        # print(threshold)
+        aux_pred = logits['bg_logits'][:, :, 0]
+        valid_slots=logits['valid_slots']
+        valid_fg_slots=exclude_noisy_slots(aux_pred,valid_slots,threshold)
+        output = torch.zeros(fg_logits.shape[0])
+        print("there are " + str(valid_fg_slots.sum()) + " foreground slots")
+        for i in range(output.shape[0]):
+            if valid_fg_slots[i].sum() > 0:
+                determined_slot = fg_logits[i, valid_fg_slots[i]]
+            else:
+                determined_slot, __ = torch.max(fg_logits[i], dim=-1)
+                determined_slot = determined_slot.unsqueeze(0)
+            energy = fg_temperature * torch.logsumexp(determined_slot / fg_temperature, dim=-1)
+            if method == "sum":
+                output[i] = torch.sum(energy, dim=0)
+            if method == "max":
+                output[i], __ = torch.max(energy, dim=0)
+            if method == "min":
+                output[i], __ = torch.min(energy, dim=0)
+
+    else:
+        energy = fg_temperature * torch.logsumexp(fg_logits / fg_temperature, dim=-1)
+
+        if method == "sum":
+            output = torch.sum(energy, dim=-1)
+        if method == "max":
+            output, __ = torch.max(energy, dim=-1)
+        if method == "min":
+            output, __ = torch.min(energy, dim=-1)
+    # print(output.shape)
     return output.cpu().numpy()
 
 
+def exclude_noisy_slots(aux_pred,valid_slot_mask,threshold):
+    bg_minimum = torch.min(aux_pred, dim=1, keepdim=True)[0]
+    bg_maxmim = torch.max(aux_pred, dim=1, keepdim=True)[0]
+    bg_pred = (aux_pred - bg_minimum) / (bg_maxmim - bg_minimum + 1e-10)  ## min-max normalization
+    valid_fg_slots = (bg_pred < threshold)&((valid_slot_mask>0)).bool()
 
-def slot_max(logits,exp_type="single"):
-    logits=logits['fg_logits'].detach().clone()
-    if exp_type=="single":
-        output= get_highest_slot(logits)
-        output=np.max(output.cpu().numpy(),axis=-1)
+    return valid_fg_slots
+
+
+
+def slot_max(logits, fg_temperatrue, threshold,exclud_noisy=False):
+    fg_logits = logits['fg_logits'].detach().clone()
+    if exclud_noisy:
+        valid_slots = logits['valid_slots']
+        aux_pred = logits['bg_logits'][:, :, 0]
+        valid_fg_slots=exclude_noisy_slots(aux_pred,valid_slots,threshold)
+        print("there are " + str(valid_fg_slots.sum()) + " foreground slots")
+        output = torch.zeros(fg_logits.shape[0])
+        for i in range(output.shape[0]):
+            if valid_fg_slots[i].sum() > 0:
+                fg_slot = fg_logits[i, valid_fg_slots[i]].flatten(0, 1)
+            else:
+                fg_slot, __ = torch.max(fg_logits[i], dim=-1)
+            output[i], __ = torch.max(fg_slot, dim=-1)
     else:
-        output,__=torch.max(logits.flatten(1,2),dim=-1)
-        output=output.cpu().numpy()
-    return output
+        output, __ = torch.max(fg_logits.flatten(1, 2), dim=-1)
+    return output.cpu().numpy()
 
-def multi_correct_slot(slots,use_softmax=True,threshold=0.95):
-    batch_size,num_slots,num_classes=slots.shape
-    output=torch.zeros((batch_size,num_classes))
-    slot_logits=slots.detach().cpu()
+
+def multi_correct_slot(slots, use_softmax=True, threshold=0.95):
+    batch_size, num_slots, num_classes = slots.shape
+    output = torch.zeros((batch_size, num_classes))
+    slot_logits = slots.detach().cpu()
     if use_softmax:
-        softmax_slot=torch.softmax(slot_logits,dim=-1)
-    slot_maximum,indices=torch.max(softmax_slot,dim=-1)
+        softmax_slot = torch.softmax(slot_logits, dim=-1)
+    slot_maximum, indices = torch.max(softmax_slot, dim=-1)
     # print(indices.max())
-    slot_logits=slot_logits*((slot_maximum>threshold).unsqueeze(-1))
-    #print(slot_logits.shape)
-    slot_maximum,indices=torch.max(slot_logits,dim=-1)
-    #print(indices.max())
+    slot_logits = slot_logits * ((slot_maximum > threshold).unsqueeze(-1))
+    # print(slot_logits.shape)
+    slot_maximum, indices = torch.max(slot_logits, dim=-1)
+    # print(indices.max())
     for i in range(batch_size):
-        output[i,indices[i]]=slot_maximum[i]
+        output[i, indices[i]] = slot_maximum[i]
 
     return output
+
+
+def get_Mahalanobis_score(model, loader, pack, noise, num_classes, cc_agg="max", slot_agg="max"):
+    '''
+    Compute the proposed Mahalanobis confidence score on input dataset
+    return: Mahalanobis score from layer_index
+    '''
+    sample_mean, precision = pack
+    model.eval()
+    Mahalanobis = []
+    # set_trainable([model.conditioning, model.perceptual_grouping], True)
+    for sample in loader:
+        data = Variable(sample['img'].cuda(), requires_grad=True)
+        output = model({"img": data})
+        slots = output["slots"]
+        slots = Variable(slots, requires_grad=True)
+        batch, num_slot, __ = slots.shape
+        gaussian_score = 0
+
+        for i in range(num_slot):
+            for j in range(num_classes):
+                batch_sample_mean = sample_mean[j]
+                zero_f = slots.data[:, i] - batch_sample_mean
+                term_gau = -0.5 * torch.mm(torch.mm(zero_f, precision), zero_f.t()).diag()
+                if j == 0:
+                    gaussian_score = term_gau.view(-1, 1)
+                else:
+                    gaussian_score = torch.cat((gaussian_score, term_gau.view(-1, 1)), 1)
+
+        # Input_processing
+        sample_pred = gaussian_score.max(1)[1]
+        batch_sample_mean = sample_mean.index_select(0, sample_pred)
+        mean_slots = torch.mean(slots, dim=1)
+        zero_f = mean_slots - Variable(batch_sample_mean)
+        pure_gau = -0.5 * torch.mm(torch.mm(zero_f, Variable(precision)), zero_f.t()).diag()
+        loss = torch.mean(-pure_gau)
+
+        loss.backward()
+        gradient = torch.ge(slots.grad.data, 0)
+        gradient = (gradient.float() - 0.5) * 2
+        gradient.index_copy_(1, torch.LongTensor([0]).cuda(),
+                             gradient.index_select(1, torch.LongTensor([0]).cuda()) / (0.229))
+        gradient.index_copy_(1, torch.LongTensor([1]).cuda(),
+                             gradient.index_select(1, torch.LongTensor([1]).cuda()) / (0.224))
+        gradient.index_copy_(1, torch.LongTensor([2]).cuda(),
+                             gradient.index_select(1, torch.LongTensor([2]).cuda()) / (0.225))
+        noise_out_features = torch.add(slots.data, gradient, alpha=-noise)
+        slot_Mahalanobis = []
+        with torch.no_grad():
+            for i in range(num_slot):
+                for j in range(num_classes):
+                    batch_sample_mean = sample_mean[j]
+                    zero_f = noise_out_features.data[:, i] - batch_sample_mean
+                    term_gau = -0.5 * torch.mm(torch.mm(zero_f, precision), zero_f.t()).diag()
+                    if j == 0:
+                        noise_gaussian_score = term_gau.view(-1, 1)
+                    else:
+                        noise_gaussian_score = torch.cat((noise_gaussian_score, term_gau.view(-1, 1)), 1)
+                if cc_agg == "max":
+                    noise_gaussian_score, _ = torch.max(noise_gaussian_score, dim=1)
+                elif cc_agg == "sum":
+                    noise_gaussian_score = torch.sum(noise_gaussian_score, dim=1)
+                slot_Mahalanobis.append(noise_gaussian_score)
+            slot_Mahalanobis = torch.stack(slot_Mahalanobis, dim=0)
+            if slot_agg == "max":
+                slot_score, __ = torch.max(slot_Mahalanobis, dim=0)
+            elif slot_agg == "sum":
+                slot_score = torch.sum(slot_Mahalanobis, dim=0)
+            Mahalanobis.extend(slot_score.cpu().numpy())
+
+    return Mahalanobis
+
+
+def get_odin_score(model, loader, method, T, noise,exclude_noisy=False):
+    ## get logits
+    classifier = model.osr_classifier
+    bg_classifier=model.aux_classifier
+    bceloss = nn.BCEWithLogitsLoss(reduction="none")
+    odin_score = []
+    classifier.train()
+
+    for i, sample in enumerate(loader):
+        data = Variable(sample['img'].cuda(), requires_grad=True)
+        slots = model.forward_slots(data)
+        slots = Variable(slots.cuda(), requires_grad=True)
+        logits = classifier(slots)
+        bg_logits=bg_classifier(slots)
+        decoder_output=model.get_slot_attention_mask(data)
+        valid_slots = model.get_valid_slots(decoder_output.masks)
+        # out_features = outputs["slots"]  ##[batch,num_slots,slot_dim]
+        preds = torch.sigmoid(logits / T)
+        labels = torch.ones(preds.shape).cuda() * (preds >= 0.5)
+        labels = Variable(labels.float())
+
+        # input pre-processing
+
+        loss = bceloss(logits, labels)
+
+        if method == 'max':
+            idx = torch.max(preds, dim=1)[1].unsqueeze(-1)
+            loss = torch.mean(torch.gather(loss, 1, idx))
+        elif method == 'sum':
+            loss = torch.mean(torch.sum(loss, dim=1))
+        preds.retain_grad()
+        # slots.retain_grad()
+        loss.backward()
+
+        # calculating the perturbation
+        gradient = torch.ge(slots.grad.data, 0)
+        gradient = (gradient.float() - 0.5) * 2
+        gradient.index_copy_(1, torch.LongTensor([0]).cuda(),
+                             gradient.index_select(1, torch.LongTensor([0]).cuda()) / (0.229))
+        gradient.index_copy_(1, torch.LongTensor([1]).cuda(),
+                             gradient.index_select(1, torch.LongTensor([1]).cuda()) / (0.224))
+        gradient.index_copy_(1, torch.LongTensor([2]).cuda(),
+                             gradient.index_select(1, torch.LongTensor([2]).cuda()) / (0.225))
+
+        tempInputs = torch.add(slots.data, gradient, alpha=-noise)
+
+        with torch.no_grad():
+            nnOutputs = classifier(tempInputs)
+            ## compute odin score
+            outputs = torch.sigmoid(nnOutputs / T)
+
+            if exclude_noisy:
+                valid_fg_slots=exclude_noisy_slots(bg_logits,valid_slots,0.5)
+                score = torch.zeros(outputs.shape[0])
+                for i in range(outputs.shape[0]):
+                    if valid_fg_slots[i].sum() > 0:
+                        fg_slot = outputs[i, valid_fg_slots[i]].flatten(0, 1)
+                    else:
+                        fg_slot, __ = torch.max(outputs[i], dim=-1)
+                    if method == "max":
+                        fg_slot=fg_slot.flatten(1,2)
+                        score[i], __ = torch.max(fg_slot, dim=1)
+                    elif method == "sum":
+                        score[i] = torch.sum(outputs, axis=1)
+            else:
+                outputs = outputs.flatten(1, 2)
+                if method == "max":
+                    score, __ = torch.max(outputs, dim=1)
+                elif method == "sum":
+                    score = torch.sum(outputs, axis=1)
+                score = score.cpu().numpy()
+            # print(score.shape)
+            if i == 0:
+                scores = score
+            else:
+                scores = np.concatenate((scores, score), axis=0)
+        # print(scores)
+        odin_score.extend(scores)
+    # print(len(odin_score))
+    return odin_score
+

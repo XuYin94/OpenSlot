@@ -155,6 +155,7 @@ class SlotAttentionGrouping(nn.Module):
         """
         super().__init__()
         self._object_dim = object_dim
+        iters=5
         self.slot_attention = SlotAttention(
             dim=object_dim,
             feature_dim=feature_dim,

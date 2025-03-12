@@ -85,24 +85,14 @@ def get_intra_coco_datasets(task_name,root_path="/root/yinxu/Dataset/coco/2014/"
 
     return all_datasets
 
-def get_voc_detection_datasets():
-    root_path="/root/yinxu/Dataset/VOC/VOCdevkit/"
-    img_transform,test_transform=get_transform(exp_name="voc")
-    train_set=voc_detection(data_root=root_path,prefix="train",transform=img_transform)
-    val_set=voc_detection(data_root=root_path,prefix="val",transform=test_transform)
-    all_datasets = {
-            'train': train_set,
-            'val': val_set
-        }
-    print('Train: ', len(train_set), 'Test: ', len(val_set))
-    return all_datasets
+
 
 def get_multi_ood_datasets(name,ood="imagenet22k"):
     root_paths = {
             "coco": "/root/yinxu/Dataset/coco/2014/",
             "voc": "/root/yinxu/Dataset/VOC/VOCdevkit/VOC2012/",
-        "voc_test": "/root/yinxu/Dataset/VOC/VOCdevkit/test/VOCdevkit/VOC2012/",
-        "imagenet22k": "/root/yinxu/Dataset/ImageNet-22K/"
+            "voc_test": "/root/yinxu/Dataset/VOC/VOCdevkit/test/VOCdevkit/VOC2012/",
+            "imagenet22k": "/root/yinxu/Dataset/ImageNet-22K/"
     }
     img_transform,test_transform=get_transform(exp_name="voc")
 

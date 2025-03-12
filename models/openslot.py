@@ -1,6 +1,5 @@
 import torch
 import torch.nn.functional as F
-import models.vision_transformer as vits
 import models.resnet_s as resnet
 import scipy
 import hydra_zen
@@ -13,11 +12,6 @@ from scipy.optimize import linear_sum_assignment
 import numpy as np
 from itertools import chain
 from utils.utils import set_trainable
-import timm
-import yaml
-from omegaconf import DictConfig, OmegaConf
-from ocl.utils.routing import Combined
-
 
 class Net(nn.Module):
     def __init__(self, model_config, checkpoint_path="./checkpoints/model_final.ckpt"):
@@ -95,6 +89,8 @@ class Net(nn.Module):
                                                                     fg_slot_selection, valid_semantic_slots=valid_slots,aux_pred=bg_pred)
                           
             fg_indices = output["fg_indices"]
+            # print(fg_indices.shape)
+            # print(fg_slot_selection.shape)
             background_label = torch.ones_like(bg_pred).float()  ##[batch,num_slot,1]
             for i in range(fg_indices.shape[0]):
                 valid_indices = fg_indices[i, 1, fg_slot_selection[i, :, 0] > 0]
@@ -166,14 +162,12 @@ class Net(nn.Module):
         class_pred = class_pred.unsqueeze(1)  ##[batch,1, num_slot, num_classes]
         targets = targets.unsqueeze(2)
         device = class_pred.device
-
         # if class_pred.shape[-1] == 1:
         #     cost_matrix = (-(targets * nn.LogSigmoid()(class_pred))).sum(dim=-1)
         #     weight_matrix = cost_matrix
         # else:
         valid_semantic_slots = valid_semantic_slots.unsqueeze(1)
-        cost_matrix = (-(targets * class_pred.log_softmax(dim=-1))).sum(dim=-1)
-
+        cost_matrix = (-(targets * class_pred.log_softmax(dim=-1))).sum(dim=-1) ## (batch size, num objects, num slots)
 
         if aux_pred is not None:  ## assign the high-confidence BG slot and invalid slots  with high cost.
             #bg_pred=torch.sigmoid(aux_pred)

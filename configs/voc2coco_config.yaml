@@ -1,0 +1,118 @@
+trainer:
+  exp_name: voc-6-14
+  max_epoch: 250
+  log_every_n_epoch: 5
+  save_every_n_epoch: 10
+  log_root_path: /mnt/nas4/yinxu/OCL_exp/log
+  softmax_eval: false
+
+dataset:
+  name: voc-6-14
+  num_workers: 4
+  batch_size: 8
+
+models:
+  feature_extractor:
+    _target_: ocl.feature_extractors.timm.TimmFeatureExtractor
+    model_name: vit_base_patch16_224_dino
+    pretrained: true
+    freeze: true
+    feature_level: 12
+  conditioning:
+    _target_: ocl.conditioning.RandomConditioning
+    n_slots: 7
+    object_dim: 256
+
+
+  perceptual_grouping:
+    _target_: ocl.perceptual_grouping.SlotAttentionGrouping
+    feature_dim: ${.object_dim}
+    object_dim: ${models.conditioning.object_dim}
+    use_projection_bias: false
+    positional_embedding:
+      _target_: ocl.neural_networks.wrappers.Sequential
+      _args_:
+        - _target_: ocl.neural_networks.positional_embedding.DummyPositionEmbed
+        - _target_: ocl.neural_networks.build_two_layer_mlp
+          input_dim: ${experiment.input_feature_dim}
+          output_dim: ${....feature_dim}
+          hidden_dim: ${experiment.input_feature_dim}
+          initial_layer_norm: true
+    ff_mlp:
+      _target_: ocl.neural_networks.build_two_layer_mlp
+      input_dim: ${..object_dim}
+      output_dim: ${..object_dim}
+      hidden_dim: 1024
+      initial_layer_norm: true
+      residual: true
+
+  classifier:
+    _target_: ocl.decoding.OSR_classifier
+    input_dim: ${models.conditioning.object_dim}
+    activation_fn: leaky_relu
+    nbr_clses: 6
+    initial_layer_norm: true
+
+  attention_threshold: 0.5
+  noise_threshold: 0.75
+  
+  aux_classifier:
+    _target_: ocl.decoding.OSR_classifier
+    input_dim: ${models.conditioning.object_dim}
+    activation_fn: leaky_relu
+    nbr_clses: 1
+    initial_layer_norm: true
+
+  object_decoder:
+    _target_: ocl.decoding.AutoregressivePatchDecoder
+    object_dim: 256
+    output_dim: ${experiment.input_feature_dim}
+    num_patches: 196
+
+    decoder_cond_dim: 768
+    use_input_transform: true
+    use_decoder_masks: true
+    decoder:
+      _target_: ocl.neural_networks.build_transformer_decoder
+      _partial_: true
+      n_layers: 4
+      n_heads: 4
+      return_attention_weights: true
+
+
+visualizations:
+  input:
+    _target_: ocl.visualizations.Image
+    denormalization:
+      _target_: ocl.preprocessing.Denormalize
+      mean: [0.485, 0.456, 0.406]
+      std: [0.229, 0.224, 0.225]
+  masks:
+    _target_: ocl.visualizations.Mask
+  pred_segmentation:
+    _target_: ocl.visualizations.Segmentation
+    denormalization:
+      _target_: ocl.preprocessing.Denormalize
+      mean: [0.485, 0.456, 0.406]
+      std: [0.229, 0.224, 0.225]
+
+experiment:
+  input_feature_dim: 768
+
+Discovery_weights: /openslot/checkpoints/Dis_partial_coco.ckpt
+
+Checkpoint_weight: ./log/multi_voc/multi_voc_osr_final.pth
+
+
+
+optimizers:
+  _target_: ocl.optimization.OptimizationWrapper
+  optimizer:
+    _target_: torch.optim.Adam
+    _partial_: true
+    lr: 0.01
+  lr_scheduler:
+    _target_: torch.optim.lr_scheduler.StepLR
+    _partial_: true
+    gamma: 0.5
+    decay_epoch: 50

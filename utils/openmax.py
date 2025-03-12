@@ -280,7 +280,3 @@ def compute_train_score_and_mavs_and_dists(train_class_num,trainloader,model):
     mavs = np.array([np.mean(x, axis=0) for x in scores])  # (C, 1, C)
     dists = [compute_channel_distances(mcv, score) for mcv, score in zip(mavs, scores)]
     return scores, mavs, dists
-
-
-
-

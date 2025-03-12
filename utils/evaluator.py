@@ -21,16 +21,17 @@ get_ood_detector={
 to_np = lambda x: x.data.cpu().numpy()
 
 class OSREvaluator:
-    def __init__(self,train_loader,visualizer,num_known_classes=7,exp_type="multi"):
+    def __init__(self,train_loader,visualizer,writer,num_known_classes=7,exp_type="multi"):
         super(OSREvaluator, self).__init__()
         self.best_val_loss=math.inf
         self.visualizer=visualizer
         self.num_known_classes=num_known_classes
         self.closed_dataloader=train_loader
         self.exp_type=exp_type
+        self.writer=writer
 
 
-    def get_known_unknown_scores(self,model,in_test_loader, out_test_loader_dict,writer,epoch_idx):
+    def get_known_unknown_scores(self,model,in_test_loader, out_test_loader_dict):
         _k_logits, _labels = [], []
         _k_valid_slots=[]
         _k_bg_logits=[]
@@ -39,43 +40,43 @@ class OSREvaluator:
         _u_valid_slots={}
         _u_bg_logits={}
         with torch.no_grad():
-            val_img_list=[]
+            #val_img_list=[]
             for batch_idx, sample in enumerate(in_test_loader):
                 for key, values in sample.items():
                     sample[key] = values.cuda()
                 outputs = model(sample)
-                slots, logits,valid_slots,bg_logits= \
+                __, logits,valid_slots,bg_logits= \
                     outputs["slots"], outputs["fg_pred"],outputs["valid_slots"],outputs["bg_pred"]
                 _k_logits.append(logits.data.cpu())
                 _k_valid_slots.append(valid_slots.data.cpu())
                 _k_bg_logits.append(bg_logits.data.cpu())
                 _labels.append(sample["label"].data.cpu())
-                if len(val_img_list)<5:
-                    val_img_list.append(sample["img"][:3].cuda())
-            val_img_list=torch.concatenate(val_img_list,0)
-            self.slot_visualization(val_img_list,model,writer,epoch_idx*batch_idx,"val")
+                # if len(val_img_list)<5:
+                #     val_img_list.append(sample["img"][:3].cuda())
+            #val_img_list=torch.concatenate(val_img_list,0)
+            #self.slot_visualization(val_img_list,model,writer,epoch_idx*batch_idx,"val")
             for out_test_type in out_test_key_List:
                 test_loader = out_test_loader_dict[out_test_type]
                 _u_logits[out_test_type] = []
                 _u_valid_slots[out_test_type]=[]
                 _u_bg_logits[out_test_type] = []
-                ood_img_list=[]
+                #ood_img_list=[]
                 for batch_idx, sample in enumerate(test_loader):
                     for key, values in sample.items():
                         sample[key] = values.cuda()
                     outputs = model(sample)
-                    slots, logits, valid_slots, bg_logits = \
+                    __, logits, valid_slots, bg_logits = \
                         outputs["slots"], outputs["fg_pred"], outputs["valid_slots"], outputs["bg_pred"]
                     _u_logits[out_test_type].append(logits.data.cpu())
                     _u_valid_slots[out_test_type].append(valid_slots.data.cpu())
                     _u_bg_logits[out_test_type].append(bg_logits.data.cpu())
-                    if len(ood_img_list) < 5:
-                        ood_img_list.append(sample["img"][:3].cuda())
+                    # if len(ood_img_list) < 5:
+                    #     ood_img_list.append(sample["img"][:3].cuda())
                 _u_logits[out_test_type] = torch.concatenate(_u_logits[out_test_type], 0)
                 _u_valid_slots[out_test_type] = torch.concatenate(_u_valid_slots[out_test_type], 0)
                 _u_bg_logits[out_test_type] = torch.concatenate(_u_bg_logits[out_test_type], 0)
-                ood_img_list=torch.concatenate(ood_img_list,dim=0)
-                self.slot_visualization(ood_img_list, model, writer, epoch_idx * batch_idx,"ood_"+out_test_type)
+                #ood_img_list=torch.concatenate(ood_img_list,dim=0)
+                #self.slot_visualization(ood_img_list, model, writer, epoch_idx * batch_idx,"ood_"+out_test_type)
 
         _k_logits = torch.concatenate(_k_logits, 0)
         _k_valid_slots=torch.concatenate(_k_valid_slots,0)
@@ -83,11 +84,11 @@ class OSREvaluator:
         _labels = torch.concatenate(_labels, 0)
         return _k_logits,_k_valid_slots,_k_bg_logits,_labels,_u_logits,_u_bg_logits,_u_valid_slots
 
-    def eval(self, model,in_test_loader, out_test_loader_dict,epoch_idx,writer,processor="slot_energy",compute_acc=True,oscr=False):
+    def eval(self, model,in_test_loader, out_test_loader_dict,processor="slot_energy",compute_acc=False):
         _known_logits,_known_valid_slots,_known_bg_logits,_labels,_unknown_logits,_unknown_bg_logits,_unknown_valid_slots=\
-            self.get_known_unknown_scores(model,in_test_loader,out_test_loader_dict,writer,epoch_idx)
+            self.get_known_unknown_scores(model,in_test_loader,out_test_loader_dict)
 
-        if compute_acc:
+        if compute_acc:  ## whether to compute the classification accuray on known classes
             if self.exp_type=="multi":
                 self.slot_predictor=multi_correct_slot
                 self.acc_metric="mAP"
@@ -97,55 +98,38 @@ class OSREvaluator:
             _correct_slot_logits = to_np(self.slot_predictor(_known_logits))
             _labels = to_np(_labels)
             in_accuracy = self.compute_in_test_accuracy(_correct_slot_logits, _labels)
-            writer.add_scalar("val/" + self.acc_metric + "", in_accuracy, epoch_idx)
-            print("Val | Epoch: {:d}\t ".format(epoch_idx) + str(
-                self.acc_metric) + " (%): {:.3f}\t".format(in_accuracy))
+            print("Val | " + str(self.acc_metric) + " (%): {:.3f}\t".format(in_accuracy))
 
         for method in processor:
             self.ood_detector = get_ood_detector[method]
             print("using "+str(method)+" processor-----")
-            best_auroc=0.0
-            best_parameter={}
-            for fg_temperature in [1]:
-                for bg_threshold in [0.05,0.25,0.50,0.75]:#[0.5,0.55,0.60,0.65,0.70,0.75,0.80,0.85,0.90,0.95]
-                    print("Using fg_temperature "+str(fg_temperature)+" and threshold "+str(bg_threshold)+"")
-                    known_logits={
-                        'fg_logits':_known_logits,
-                        'valid_slots': _known_valid_slots,
-                        'bg_logits':_known_bg_logits
-                    }
-                    _known_ood_score=self.ood_detector(known_logits,fg_temperature,bg_threshold)
-                    for key,unknown_logit in _unknown_logits.items():
+            # for fg_temperature in [1]:
+            #     for bg_threshold in [0.05,0.25,0.50,0.75]:#[0.5,0.55,0.60,0.65,0.70,0.75,0.80,0.85,0.90,0.95]
+            #         print("Using fg_temperature "+str(fg_temperature)+" and threshold "+str(bg_threshold)+"")
+            known_logits={
+                'fg_logits':_known_logits,
+                'valid_slots': _known_valid_slots,
+                'bg_logits':_known_bg_logits
+            }
+            _known_ood_score=self.ood_detector(known_logits)
+            for key,unknown_logit in _unknown_logits.items():
 
-                        print("start to evaluate "+key+" ood:")
-                        unknown_logits = {
-                            'fg_logits': unknown_logit,
-                            'valid_slots': _unknown_valid_slots[key],
-                            'bg_logits': _unknown_bg_logits[key]
-                        }
-                        _unknown_ood_score=self.ood_detector(unknown_logits,fg_temperature,bg_threshold)
+                print("start to evaluate "+key+" ood:")
+                unknown_logits = {
+                    'fg_logits': unknown_logit,
+                    'valid_slots': _unknown_valid_slots[key],
+                    'bg_logits': _unknown_bg_logits[key]
+                }
+                _unknown_ood_score=self.ood_detector(unknown_logits)
 
-                        ood_evaluations=self.ood_eval(_known_ood_score,_unknown_ood_score)
-                        if oscr:
-                            _unknown_slot_logits = to_np(self.slot_predictor(unknown_logit))
-                            ood_evaluations["OSCR"] = evaluation.compute_oscr(_correct_slot_logits,
-                                                                                _unknown_slot_logits, _labels) * 100
-                            writer.add_scalar("" + key + "/OSCR", ood_evaluations["OSCR"], epoch_idx)
-                        print("Metrics",{
-                            "OOD": ood_evaluations
-                        })
-                        if ood_evaluations["AUROC"]>best_auroc:
-                            best_auroc=ood_evaluations["AUROC"]
-                            best_parameter["fg_t"]=fg_temperature
-                            best_parameter["threshold"]=bg_threshold
-            print(best_auroc)
-            print(best_parameter)
-                # writer.add_scalar(""+key+"/AUPR",ood_evaluations["AUPR"],epoch_idx)
-                # writer.add_scalar("" + key + "/AUROC", ood_evaluations["AUROC"],epoch_idx)
-                # writer.add_scalar("" + key + "/FPR@95", ood_evaluations["FPR@95"],epoch_idx)
-
-
-
+                ood_evaluations=self.ood_eval(_known_ood_score,_unknown_ood_score)
+                print("Metrics",{
+                    "OOD": ood_evaluations
+                })
+                        # if ood_evaluations["AUROC"]>best_auroc:
+                        #     best_auroc=ood_evaluations["AUROC"]
+                        #     best_parameter["fg_t"]=fg_temperature
+                        #     best_parameter["threshold"]=bg_threshold
     def ood_eval(self,k_ood_score,u_ood_score):
         #if self.exp_type=="single":
         results = evaluation.metric_ood(k_ood_score, u_ood_score)['Bas']

@@ -177,6 +177,8 @@ def slot_jointenergy(logits, fg_temperature, threshold, exp_type="single", exclu
             assert not torch.isinf(torch.exp(determined_slot)).any()
             energy = torch.log(1 + torch.exp(determined_slot))
             energy = torch.sum(energy, dim=-1)
+            
+            ## chose a way to compute the determinstic score
             if method == "sum":
                 output[i] = torch.sum(energy, dim=0)
             if method == "max":
@@ -229,7 +231,7 @@ def slot_entropy(logits, temperature, bg_threshold, exp_type="single"):
     return entropy.cpu().numpy()
 
 
-def slot_energy(logits, fg_temperature, threshold, exclude_noise=True, method="sum"):
+def slot_energy(logits, fg_temperature=1, threshold=0.05, exclude_noise=False, method="sum"):
     fg_logits = logits['fg_logits']
 
     if exclude_noise:
@@ -276,7 +278,7 @@ def exclude_noisy_slots(aux_pred,valid_slot_mask,threshold):
 
 
 
-def slot_max(logits, fg_temperatrue, threshold,exclud_noisy=False):
+def slot_max(logits, fg_temperatrue=1, threshold=0.05,exclud_noisy=False):
     fg_logits = logits['fg_logits'].detach().clone()
     if exclud_noisy:
         valid_slots = logits['valid_slots']

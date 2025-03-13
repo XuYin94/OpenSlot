@@ -22,36 +22,6 @@ case $1 in
     ;;
 
 
-  clevr+cater)
-    echo "Downloading clevr and cater data to data/multi-object-datasets"
-    mkdir -p data/multi-object-datasets/clevr_with_masks
-    gsutil -m rsync -r gs://multi-object-datasets/clevr_with_masks data/multi-object-datasets/clevr_with_masks
-    mkdir -p data/multi-object-datasets/cater_with_masks
-    gsutil -m rsync -r gs://multi-object-datasets/cater_with_masks data/multi-object-datasets/cater_with_masks
-    export CUDA_VISIBLE_DEVICES=""
-    export TF_FORCE_GPU_ALLOW_GROWTH=True
-    SEED=837452923
-
-    echo "Converting clevr to webdataset stored at outputs/clevr_with_masks"
-    python conversion_scripts/convert_tfrecords.py clevr_with_masks data/multi-object-datasets/clevr_with_masks/clevr_with_masks_train.tfrecords outputs/clevr_with_masks --split_names train val test --split_ratios 0.8 0.1 0.1 --n_instances 100000 --seed $SEED
-    python conversion_scripts/convert_tfrecords.py clevr_with_masks data/multi-object-datasets/clevr_with_masks/clevr_with_masks_train.tfrecords outputs/clevr_with_masks --split_names train val test --split_ratios 0.7 0.15 0.15 --n_instances 100000 --seed $SEED
-
-    echo "Converting cater to webdataset stored at outputs/cater_with_masks"
-    python conversion_scripts/convert_tfrecords.py cater_with_masks "data/multi-object-datasets/cater_with_masks/cater_with_masks_train.tfrecords-*-of-*" outputs/cater_with_masks --split_names train val --split_ratios 0.9 0.1 --n_instances 39364 --seed $SEED
-    python conversion_scripts/convert_tfrecords.py cater_with_masks "data/multi-object-datasets/cater_with_masks/cater_with_masks_test.tfrecords-*-of-*" outputs/cater_with_masks/test --n_instances 17100 --seed $SEED
-    ;;
-
-
-  clevrer)
-    echo "Downloading clevrer data"
-    ./download_scripts/download_clevrer_data.sh
-
-    echo "Converting clevrer to webdataset stored at outputs/clevrer"
-    python conversion_scripts/convert_clevrer.py --video_dir="data/clevrer/video_train/" --annotation_dir="data/clevrer/annotation_train/" --output_dir="outputs/clevrer/train/"
-    python conversion_scripts/convert_clevrer.py --video_dir="data/clevrer/video_validation/" --annotation_dir="data/clevrer/annotation_validation/" --output_dir="outputs/clevrer/validation/"
-    ;;
-
-
   voc2007)
     echo "Creating voc2007 webdataset in outputs/voc2007"
     # Ensure downloaded data is stored in data folder.
@@ -80,28 +50,6 @@ case $1 in
     ;;
 
 
-  movi_c)
-    echo "Creating movi_c webdataset in outputs/movi_c"
-    mkdir -p outputs/movi_c
-    mkdir -p outputs/movi_c/train
-    python conversion_scripts/convert_tfds.py movi_c/128x128:1.0.0 train outputs/movi_c/train --dataset_path gs://kubric-public/tfds
-    mkdir -p outputs/movi_c/val
-    python conversion_scripts/convert_tfds.py movi_c/128x128:1.0.0 validation outputs/movi_c/val --dataset_path gs://kubric-public/tfds
-    mkdir -p outputs/movi_c/test
-    python conversion_scripts/convert_tfds.py movi_c/128x128:1.0.0 test outputs/movi_c/test --dataset_path gs://kubric-public/tfds
-    ;;
-
-
-  movi_e)
-    echo "Creating movi_e webdataset in outputs/movi_e"
-    mkdir -p outputs/movi_e
-    mkdir -p outputs/movi_e/train
-    python conversion_scripts/convert_tfds.py movi_e/128x128:1.0.0 train outputs/movi_e/train --dataset_path gs://kubric-public/tfds
-    mkdir -p outputs/movi_e/val
-    python conversion_scripts/convert_tfds.py movi_e/128x128:1.0.0 validation outputs/movi_e/val --dataset_path gs://kubric-public/tfds
-    mkdir -p outputs/movi_e/test
-    python conversion_scripts/convert_tfds.py movi_e/128x128:1.0.0 test outputs/movi_e/test --dataset_path gs://kubric-public/tfds
-    ;;
 
 
   *)
